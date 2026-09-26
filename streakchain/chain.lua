@@ -108,6 +108,22 @@ function C.compute(days, now)
     for i = 0, C.weekdayIndex(today) do
         week = week + (days[C.key(C.addDays(today, -i))] or 0)
     end
+    local last_monday = C.addDays(today, -(C.weekdayIndex(today) + 7))
+    local last_week = 0
+    for i = 0, 6 do
+        last_week = last_week + (days[C.key(C.addDays(last_monday, i))] or 0)
+    end
+
+    -- An average reading day: the mean over the days read in the 30 before
+    -- today (today is still in progress).
+    local read_days, read_total = 0, 0
+    for i = 1, 30 do
+        local s = days[C.key(C.addDays(today, -i))] or 0
+        if s > 0 then
+            read_days = read_days + 1
+            read_total = read_total + s
+        end
+    end
 
     return {
         streak = streak,
@@ -115,8 +131,26 @@ function C.compute(days, now)
         read_today = read_today,
         cells = cells,
         week_seconds = week,
+        last_week_seconds = last_week,
+        today_seconds = days[tk] or 0,
+        avg_day_seconds = read_days > 0 and read_total / read_days or nil,
         first_day = first,
     }
+end
+
+--[[
+The streak strip: one segment per day, as many as the best run (at least 7).
+  filled   days in the current run
+  pending  true when today would extend the run (not read yet, run alive)
+  n        segments to draw; beyond STRIP_MAX the strip becomes a plain bar
+]]
+C.STRIP_MIN = 7
+C.STRIP_MAX = 14
+
+function C.strip(streak, best, read_today)
+    local pending = streak > 0 and not read_today
+    local n = math.max(best or 0, streak + (pending and 1 or 0), C.STRIP_MIN)
+    return { n = n, filled = streak, pending = pending, best = best or 0, bar = n > C.STRIP_MAX }
 end
 
 -- Chapter marks for the progress bar, as fractions of the book. Front and

@@ -1,11 +1,13 @@
 --[[
-Draws the model from streakchain/data.lua. All layout is in the design's own
-units (a 1264x1680 portrait canvas, 1680x1264 in landscape) and scaled to the
-real screen, so it matches the design canvas on any Kindle.
+Draws the model from streakchain/data.lua as design 6.4a ("Big book"): the
+book on top (cover, title, time to the end, finish forecast), a full-width
+timeline of the book, and the reader underneath (streak strip, note, this
+week and books this year).
 
-Layouts: portrait, landscape, no book open, and statistics off (a hint in
-place of the chain). Anything that fails to draw falls back to a plain
-message instead of a blank or broken sleep screen.
+Layout is in the design's own units (a 1264x1680 portrait canvas, 1680x1264
+in landscape) scaled to the real screen, except the cover: it is drawn at
+its own pixel size and only ever shrunk to fit, never enlarged or reshaped.
+Anything that fails to draw falls back to a plain "Sleeping" screen.
 ]]
 
 local Blitbuffer = require("ffi/blitbuffer")
@@ -25,11 +27,9 @@ local Screen = Device.screen
 local function gray(v) return Blitbuffer.Color8(v) end
 local PAPER = Blitbuffer.COLOR_WHITE
 local INK = gray(0x11)
-local G44, G55, G66 = gray(0x44), gray(0x55), gray(0x66)
-local G77, G99, GBB = gray(0x77), gray(0x99), gray(0xBB)
+local G44, G55, G77 = gray(0x44), gray(0x55), gray(0x77)
+local G99, GBB, GCC = gray(0x99), gray(0xBB), gray(0xCC)
 local COVER_PAPER = gray(0xF7)
-
-local LEVEL = { l = GBB, m = G77, h = INK }
 
 -- Vollkorn and Atkinson Hyperlegible when installed, KOReader's own fonts otherwise.
 local FONTS = {
@@ -59,11 +59,23 @@ local function text(str, fc, color, max_w)
     return TextWidget:new{ text = str, face = fc, fgcolor = color or INK, padding = 0, max_width = max_w }
 end
 
-local function textbox(str, fc, width, align, color, line_height, bg)
-    return TextBoxWidget:new{
+local function textbox(str, fc, width, align, color, line_height, bg, max_lines)
+    local tb = TextBoxWidget:new{
         text = str, face = fc, width = width, alignment = align or "left",
         fgcolor = color or INK, line_height = line_height or 0.1, bgcolor = bg or PAPER,
     }
+    if max_lines then
+        local lh = tb:getLineHeight()
+        if tb:getSize().h > lh * max_lines + 2 then
+            tb:free()
+            tb = TextBoxWidget:new{
+                text = str, face = fc, width = width, alignment = align or "left",
+                fgcolor = color or INK, line_height = line_height or 0.1, bgcolor = bg or PAPER,
+                height = lh * max_lines, height_overflow_show_ellipsis = true,
+            }
+        end
+    end
+    return tb
 end
 
 local function rect(bb, x, y, w, h, c)
@@ -75,6 +87,7 @@ local function frame(bb, x, y, w, h, t, c)
 end
 
 local function dashed(bb, x, y, w, h, t, c, dash, space)
+    if not bb then return end
     local i = 0
     while i < w do
         local l = math.min(dash, w - i)
@@ -153,13 +166,13 @@ end
 
 function StreakScreen:header(bb, x, y, w, px, header)
     header = header or {}
-    local fc = face("sans", px(22))
+    local fc = face("sans", px(26))
     local left = text(string.upper(header.date or ""), fc, G44)
     local h = left:getSize().h
     if bb then left:paintTo(bb, x, y) end
     left:free()
     if header.battery then
-        local t = text(string.upper(header.battery), face("sansBold", px(22)), PAPER)
+        local t = text(string.upper(header.battery), face("sansBold", px(26)), PAPER)
         local s = t:getSize()
         local pw, ph = s.w + px(32), s.h + px(12)
         if bb then
@@ -175,64 +188,6 @@ function StreakScreen:header(bb, x, y, w, px, header)
     return h
 end
 
--- Title (two lines at most, then an ellipsis) and the meta line under it.
-function StreakScreen:titleBlock(bb, x, y, w, px, book, align)
-    local fc = face("title", px(62))
-    local tb = textbox(book.title or "", fc, w, align, INK, 0.05)
-    local lh = tb:getLineHeight()
-    local th = tb:getSize().h
-    if th > lh * 2 + 2 then
-        tb:free()
-        tb = TextBoxWidget:new{
-            text = book.title or "", face = fc, width = w, alignment = align, fgcolor = INK,
-            line_height = 0.05, height = lh * 2, height_overflow_show_ellipsis = true,
-        }
-        th = tb:getSize().h
-    end
-    local mfc = face("sans", px(24))
-    local meta
-    local variants = book.meta or {}
-    for i, v in ipairs(variants) do
-        local t = text(v, mfc, G44)
-        if t:getSize().w <= w or i == #variants then
-            if t:getSize().w > w then
-                t:free()
-                t = text(v, mfc, G44, w)
-            end
-            meta = t
-            break
-        end
-        t:free()
-    end
-    local mh = meta and meta:getSize().h or 0
-    local total = px(8) + th + px(4) + mh
-    if bb then
-        tb:paintTo(bb, x, y + px(8))
-        if meta then
-            local mw = meta:getSize().w
-            local mx = align == "center" and x + math.floor((w - mw) / 2) or x
-            meta:paintTo(bb, mx, y + px(8) + th + px(4))
-        end
-    end
-    tb:free()
-    if meta then meta:free() end
-    return total
-end
-
-function StreakScreen:progress(bb, x, y, w, px, book)
-    local pct = book.finished and 1 or math.max(0, math.min(1, book.pct or 0))
-    rect(bb, x, y + px(10), w, math.max(1, px(2)), G99)
-    rect(bb, x, y + px(7), math.floor(w * pct), px(8), INK)
-    for _, t in ipairs(book.ticks or {}) do
-        rect(bb, x + math.floor(w * t), y, math.max(1, px(2)), px(22), G66)
-    end
-    local d = px(22)
-    local mx = x + math.floor(w * pct) - math.floor(d / 2)
-    mx = math.max(x, math.min(x + w - d, mx))
-    bb:paintRoundedRect(mx, y, d, d, INK, math.floor(d / 2))
-    return px(22)
-end
-
 function StreakScreen:typesetCover(bb, x, y, w, h, book)
     local s = h / 840
     local function sp(v) return math.max(1, math.floor(v * s + 0.5)) end
@@ -240,8 +195,8 @@ function StreakScreen:typesetCover(bb, x, y, w, h, book)
     local inset = sp(28)
     frame(bb, x + inset, y + inset, w - 2 * inset, h - 2 * inset, 1, INK)
     local inner = w - 2 * inset - sp(80)
-    local tb = textbox(book.title or "", face("title", sp(76)), inner, "center", INK, 0.05, COVER_PAPER)
-    local at = book.author and textbox(string.upper(book.author), face("sans", sp(22)), inner, "center", G44, nil, COVER_PAPER) or nil
+    local tb = textbox(book.title or "", face("title", sp(76)), inner, "center", INK, 0.05, COVER_PAPER, 4)
+    local at = book.author and textbox(string.upper(book.author), face("sans", sp(24)), inner, "center", G44, nil, COVER_PAPER, 2) or nil
     local gap, rule_w, rule_h = sp(28), sp(80), sp(2)
     local total = (at and at:getSize().h + gap or 0) + rule_h + gap + tb:getSize().h
     local cy = y + math.floor((h - total) / 2)
@@ -257,33 +212,28 @@ function StreakScreen:typesetCover(bb, x, y, w, h, book)
     tb:free()
 end
 
--- The cover, fitted whole into the box: never cropped, never stretched past
--- 1.5x its own pixels. Returns the rectangle it used.
-function StreakScreen:cover(bb, x, y, w, h, px, book, align)
-    local shadow = px(16)
-    local maxw, maxh = w - 2 * shadow, h - shadow
-    if maxw <= 0 or maxh <= 0 then return x, y, 0, 0 end
+-- The size the cover will be drawn at: its own pixels, shrunk only to fit.
+function StreakScreen:coverSize(book, maxw, maxh, px)
     local img = book.cover
-    local iw, ih = 2, 3
     if img then
-        -- Remember the cover's own size before the first scale replaces it.
         book.cover_w = book.cover_w or img:getWidth()
         book.cover_h = book.cover_h or img:getHeight()
-        iw, ih = book.cover_w, book.cover_h
+        local scale = math.min(1, maxw / book.cover_w, maxh / book.cover_h)
+        return math.floor(book.cover_w * scale), math.floor(book.cover_h * scale)
     end
-    local ch = maxh
-    local cw = math.floor(ch * iw / ih)
-    if cw > maxw then
-        cw = maxw
-        ch = math.floor(cw * ih / iw)
+    local h = math.min(maxh, px(640))
+    local w = math.floor(h * 2 / 3)
+    if w > maxw then
+        w = maxw
+        h = math.floor(w * 3 / 2)
     end
-    if img and ch > ih * 1.5 then
-        ch = math.floor(ih * 1.5)
-        cw = math.floor(iw * 1.5)
-    end
-    local cx = align == "left" and x or x + math.floor((w - cw) / 2)
-    local cy = y + math.floor((maxh - ch) / 2)
-    rect(bb, cx + shadow, cy + shadow, cw, ch, GBB)
+    return w, h
+end
+
+function StreakScreen:cover(bb, x, y, cw, ch, px, book)
+    local shadow = px(14)
+    rect(bb, x + shadow, y + shadow, cw, ch, GBB)
+    local img = book.cover
     if img then
         -- scaleBlitBuffer frees the buffer it is given, so scale once, keep
         -- the result as the model's cover, and reuse it on every repaint.
@@ -291,247 +241,407 @@ function StreakScreen:cover(bb, x, y, w, h, px, book, align)
             img = RenderImage:scaleBlitBuffer(img, cw, ch)
             book.cover = img
         end
-        bb:blitFrom(img, cx, cy, 0, 0, cw, ch)
+        bb:blitFrom(img, x, y, 0, 0, cw, ch)
     else
-        self:typesetCover(bb, cx, cy, cw, ch, book)
+        self:typesetCover(bb, x, y, cw, ch, book)
     end
-    frame(bb, cx, cy, cw, ch, math.max(1, px(2)), INK)
+    frame(bb, x, y, cw, ch, math.max(1, px(2)), INK)
     if book.finished then
-        local t = text("Finished", face("title", px(44)), PAPER)
+        local t = text("Finished", face("title", math.max(px(24), math.min(px(40), math.floor(cw / 8)))), PAPER)
         local s = t:getSize()
-        local bw, bh = s.w + px(80), s.h + px(20)
-        local bx = cx + math.floor((cw - bw) / 2)
-        local by = cy + ch - px(56) - bh
+        local pad = math.floor(s.h / 3)
+        local bw, bh = s.w + 4 * pad, s.h + pad
+        local bx = x + math.floor((cw - bw) / 2)
+        local by = y + ch - math.floor(ch / 12) - bh
         rect(bb, bx, by, bw, bh, INK)
-        t:paintTo(bb, bx + px(40), by + px(10))
+        t:paintTo(bb, bx + 2 * pad, by + math.floor(pad / 2))
         t:free()
     end
-    return cx, cy, cw, ch
 end
 
-function StreakScreen:cell(bb, x, y, w, h, code, px)
-    if code == "n" then
-        local d = math.max(2, px(6))
-        rect(bb, x + math.floor((w - d) / 2), y + math.floor((h - d) / 2), d, d, GBB)
-    elseif code == "x" then
-        frame(bb, x, y, w, h, math.max(1, px(2)), G99)
-    elseif LEVEL[code] then
-        rect(bb, x, y, w, h, LEVEL[code])
-    elseif code == "te" then
-        local t = math.max(1, px(2))
-        dashed(bb, x, y, w, h, t, INK, math.max(2, px(6)), math.max(2, px(4)))
-    elseif code == "tl" or code == "tm" or code == "th" then
-        rect(bb, x, y, w, h, LEVEL[code:sub(2)])
-        frame(bb, x, y, w, h, math.max(1, px(3)), INK)
+-- Hero: the number and its unit side by side, or stacked when that's too wide.
+function StreakScreen:hero(bb, x, y, w, px, hero, compact)
+    local size = compact and px(112) or px(150)
+    local nt = text(hero[1], face("number", size))
+    while nt:getSize().w > w and size > px(80) do
+        nt:free()
+        size = size - px(10)
+        nt = text(hero[1], face("number", size))
     end
-end
-
--- Four weeks of squares with day labels and a legend. Returns its height.
-function StreakScreen:chain(bb, x, y, width, cell_h, gap, label_px, px, cells)
-    local col = math.floor((width - 6 * gap) / 7)
-    local lf = face("sans", label_px)
-    local probe = text("M", lf)
-    local lh = probe:getSize().h
-    probe:free()
-    local labels = { "M", "T", "W", "T", "F", "S", "S" }
-    if bb then
-        for i, l in ipairs(labels) do
-            local t = text(l, lf, G55)
-            local cx = x + (i - 1) * (col + gap)
-            t:paintTo(bb, cx + math.floor((col - t:getSize().w) / 2), y)
-            t:free()
+    local ut = text(hero[2], face("sans", px(36)))
+    local ns, us = nt:getSize(), ut:getSize()
+    local h
+    if ns.w + px(16) + us.w <= w then
+        h = ns.h
+        if bb then
+            nt:paintTo(bb, x, y)
+            ut:paintTo(bb, x + ns.w + px(16), y + nt:getBaseline() - ut:getBaseline())
+        end
+    else
+        h = ns.h + px(4) + us.h
+        if bb then
+            nt:paintTo(bb, x, y)
+            ut:paintTo(bb, x, y + ns.h + px(4))
         end
     end
-    local gy = y + lh + px(8)
-    if bb then
-        for i, code in ipairs(cells or {}) do
-            local r, c = math.floor((i - 1) / 7), (i - 1) % 7
-            self:cell(bb, x + c * (col + gap), gy + r * (cell_h + gap), col, cell_h, code, px)
-        end
-    end
-    local ly = gy + 4 * cell_h + 3 * gap + px(12)
-    if bb then
-        local less = text("less", lf, G55)
-        less:paintTo(bb, x, ly)
-        local sx = x + less:getSize().w + px(8)
-        less:free()
-        local sw = math.max(px(14), math.floor(label_px))
-        local sy = ly + math.floor((lh - sw) / 2)
-        self:cell(bb, sx, sy, sw, sw, "x", px)
-        sx = sx + sw + px(8)
-        for _, code in ipairs({ "l", "m", "h" }) do
-            self:cell(bb, sx, sy, sw, sw, code, px)
-            sx = sx + sw + px(8)
-        end
-        local more = text("more", lf, G55)
-        more:paintTo(bb, sx, ly)
-        more:free()
-    end
-    return (ly + lh) - y
+    nt:free(); ut:free()
+    return h
 end
 
--- Big streak number, its note, and the stats line. Returns its height.
-function StreakScreen:streak(bb, x, y, w, px, stats, align)
-    local nt = text(tostring(stats.streak or 0), face("number", px(120)), INK)
-    local lt = text("day streak", face("sans", px(28)), INK)
-    local ns, ls = nt:getSize(), lt:getSize()
-    local talign = align == "center" and "center" or "left"
-    local note = textbox(stats.note or "", face("serif", px(34)), w, talign, INK, 0.1)
-    local line = textbox(stats.line or "", face("sans", px(22)), w, talign, G44, 0.15)
-    local nh, lnh = note:getSize().h, line:getSize().h
-    local total = ns.h + px(6) + nh + px(10) + lnh
-    if bb then
-        local row_w = ns.w + px(16) + ls.w
-        local rx = align == "center" and x + math.floor((w - row_w) / 2) or x
-        nt:paintTo(bb, rx, y)
-        lt:paintTo(bb, rx + ns.w + px(16), y + nt:getBaseline() - lt:getBaseline())
-        note:paintTo(bb, x, y + ns.h + px(6))
-        line:paintTo(bb, x, y + ns.h + px(6) + nh + px(10))
+-- The right-hand side of the book band: title and meta at the top, hero and
+-- forecast at the bottom. Returns top height and bottom height.
+function StreakScreen:bookText(bb, x, y, w, h, px, book, compact)
+    local tb = textbox(book.title or "", face("title", px(64)), w, "left", INK, 0.05, PAPER, 2)
+    local th = tb:getSize().h
+    -- The author on its own line, then the progress line, which wraps rather
+    -- than dropping the chapter's name.
+    local mfc = face("sans", px(30))
+    local author = book.author and text(book.author, mfc, G44, w) or nil
+    local progress_text = book.progress or (book.meta and book.meta[1]) or ""
+    local progress = textbox(progress_text, mfc, w, "left", G44, 0.1, PAPER, 2)
+    local meta = {
+        getSize = function()
+            return { h = (author and author:getSize().h + px(4) or 0) + progress:getSize().h }
+        end,
+        paintTo = function(_, target, mx, my)
+            if author then
+                author:paintTo(target, mx, my)
+                my = my + author:getSize().h + px(4)
+            end
+            progress:paintTo(target, mx, my)
+        end,
+        free = function()
+            if author then author:free() end
+            progress:free()
+        end,
+    }
+    local mh = meta and meta:getSize().h or 0
+    local top_h = th + px(8) + mh
+
+    local bottom_h = 0
+    local fc
+    if book.hero then
+        bottom_h = self:hero(nil, x, 0, w, px, book.hero, compact)
     end
-    nt:free(); lt:free(); note:free(); line:free()
-    return total
+    if book.forecast then
+        fc = textbox(book.forecast.line, face("serif", compact and px(34) or px(40)), w, "left", INK, 0.1, PAPER, 2)
+        bottom_h = bottom_h + px(14) + fc:getSize().h
+    end
+
+    if bb then
+        tb:paintTo(bb, x, y)
+        if meta then meta:paintTo(bb, x, y + th + px(8)) end
+        local by = y + math.max(top_h + px(32), h - bottom_h)
+        if book.hero then
+            by = by + self:hero(bb, x, by, w, px, book.hero, compact)
+        end
+        if fc then fc:paintTo(bb, x, by + px(14)) end
+    end
+    tb:free()
+    if meta then meta:free() end
+    if fc then fc:free() end
+    return top_h, bottom_h
 end
 
--- Chain and streak side by side, vertically centred. Returns its height.
-function StreakScreen:footer(bb, x, y, w, px, stats)
-    local chain_w, gap = px(330), px(56)
-    local sx, sw = x + chain_w + gap, w - chain_w - gap
-    local ch = self:chain(nil, x, y, chain_w, px(36), px(8), px(18), px, stats.cells)
-    local sh = self:streak(nil, sx, y, sw, px, stats, "left")
-    local h = math.max(ch, sh)
+-- Cover on the left, text on the right. Returns its height.
+function StreakScreen:bookBand(bb, x, y, w, maxh, px, book)
+    local shadow = px(14)
+    local cw, ch = self:coverSize(book, math.floor(w * 0.52) - shadow, maxh - shadow, px)
+    local tx = x + cw + shadow + px(48)
+    local tw = x + w - tx
+    local top_h, bottom_h = self:bookText(nil, tx, y, tw, ch, px, book)
+    local h = math.max(ch + shadow, top_h + px(32) + bottom_h)
     if bb then
-        self:chain(bb, x, y + math.floor((h - ch) / 2), chain_w, px(36), px(8), px(18), px, stats.cells)
-        self:streak(bb, sx, y + math.floor((h - sh) / 2), sw, px, stats, "left")
+        self:cover(bb, x, y, cw, ch, px, book)
+        self:bookText(bb, tx, y, tw, math.max(ch, h - shadow), px, book)
     end
     return h
 end
 
--- Shown in place of the chain when Reading statistics is off.
+-- Chapter names over the timeline: all of them when they fit, otherwise just
+-- the current chapter's.
+function StreakScreen:chapterLabels(x, w, px, book)
+    local chapters = book.chapters or {}
+    if #chapters == 0 then return {} end
+    local fc = face("sans", px(24))
+    local labels = {}
+    local fits = true
+    for i, c in ipairs(chapters) do
+        local t = text(string.upper(c.title or ""), fc, G55)
+        local lx = c.pos <= 0.001 and x or x + math.floor(w * c.pos) + px(12)
+        labels[i] = { t = t, x = lx, w = t:getSize().w, pos = c.pos }
+    end
+    for i, l in ipairs(labels) do
+        local limit = labels[i + 1] and (labels[i + 1].x - px(16)) or (x + w)
+        if l.x + l.w > limit then fits = false end
+    end
+    if fits then return labels end
+    local current
+    for _, l in ipairs(labels) do
+        if l.pos <= (book.pct or 0) + 1e-6 then current = l end
+    end
+    for _, l in ipairs(labels) do
+        if l ~= current then l.t:free() end
+    end
+    if not current then return {} end
+    current.x = math.max(x, math.min(current.x, x + w - current.w))
+    return { current }
+end
+
+function StreakScreen:timeline(bb, x, y, w, px, book)
+    local labels = self:chapterLabels(x, w, px, book)
+    local lh = px(34)
+    local top_h = #labels > 0 and (lh + px(10)) or 0
+    local bar_h = px(40)
+    local total = top_h + bar_h + px(10) + lh
+    if not bb then
+        for _, l in ipairs(labels) do l.t:free() end
+        return total
+    end
+    for _, l in ipairs(labels) do
+        l.t:paintTo(bb, l.x, y)
+        l.t:free()
+    end
+
+    local by = y + top_h
+    local pct = book.finished and 1 or math.max(0, math.min(1, book.pct or 0))
+    local px_at = function(p) return x + math.floor(w * p) end
+    local fh = px(14)
+    local fy = by + math.floor((bar_h - fh) / 2)
+    rect(bb, x, by + math.floor(bar_h / 2) - px(2), w, px(4), G99)
+
+    local fc = book.forecast
+    local today_end = pct
+    if fc and not book.finished then
+        today_end = pct + (1 - pct) * math.max(0, math.min(1, fc.today_share or 0))
+        rect(bb, px_at(pct), fy, px_at(today_end) - px_at(pct), fh, GBB)
+        if today_end < 1 then
+            dashed(bb, px_at(today_end), fy, x + w - px_at(today_end), fh, math.max(1, px(2)), G77, px(8), px(6))
+        end
+    end
+    rect(bb, x, fy, px_at(pct) - x, fh, INK)
+    for _, t in ipairs(book.ticks or {}) do
+        rect(bb, px_at(t) - math.floor(px(4) / 2), by, px(4), bar_h, G55)
+    end
+    rect(bb, x + w - px(4), by, px(4), bar_h, INK)
+    local d = px(36)
+    if not book.finished then
+        local mx = math.max(x, math.min(x + w - d, px_at(pct) - math.floor(d / 2)))
+        bb:paintRoundedRect(mx, by + math.floor((bar_h - d) / 2), d, d, INK, math.floor(d / 2))
+    end
+
+    -- Labels under the bar: position, TODAY, finish day. A label that doesn't
+    -- fit its segment, or would touch another, is left out.
+    local ly = by + bar_h + px(10)
+    local taken = {}
+    local function place(t, cx, lo, hi)
+        local tw = t:getSize().w
+        local lx = math.floor(cx - tw / 2)
+        lx = math.max(lo, math.min(lx, hi - tw))
+        if lx < lo or lx + tw > hi then t:free(); return end
+        for _, r in ipairs(taken) do
+            if lx < r[2] + px(12) and lx + tw + px(12) > r[1] then t:free(); return end
+        end
+        t:paintTo(bb, lx, ly)
+        table.insert(taken, { lx, lx + tw })
+        t:free()
+    end
+    if book.finished then
+        place(text("FINISHED", face("sansBold", px(28))), x + w, x, x + w)
+        return total
+    end
+    place(text(Format.percent(pct), face("sansBold", px(28))), px_at(pct), x, x + w)
+    if fc then
+        local lf = face("sans", px(24))
+        if today_end > pct then
+            place(text("TODAY", lf, G55), (px_at(pct) + px_at(today_end)) / 2, px_at(pct), px_at(today_end))
+        end
+        if fc.label and today_end < 1 then
+            place(text(fc.label, lf, G55), (px_at(today_end) + x + w) / 2, px_at(today_end), x + w)
+        end
+    end
+    return total
+end
+
+function StreakScreen:strip(bb, x, y, w, h, px, strip)
+    local t = math.max(1, px(2))
+    if strip.bar then
+        local unit = w / strip.n
+        rect(bb, x, y, math.floor(unit * strip.filled), h, INK)
+        frame(bb, x, y, w, h, t, G99)
+        if strip.pending then
+            dashed(bb, x + math.floor(unit * strip.filled), y, math.max(px(8), math.floor(unit)), h, t, INK, px(8), px(6))
+        end
+        if strip.best > strip.filled then
+            rect(bb, x + math.floor(unit * strip.best) - px(2), y - px(6), px(4), h + px(12), INK)
+        end
+        return
+    end
+    local gap = px(8)
+    local cell = (w - gap * (strip.n - 1)) / strip.n
+    for i = 1, strip.n do
+        local cx = x + math.floor((i - 1) * (cell + gap))
+        local cw = math.floor(cell)
+        if i <= strip.filled then
+            rect(bb, cx, y, cw, h, INK)
+        elseif i == strip.filled + 1 and strip.pending then
+            dashed(bb, cx, y, cw, h, t, INK, px(8), px(6))
+        elseif i <= strip.best then
+            frame(bb, cx, y, cw, h, t, G99)
+        else
+            frame(bb, cx, y, cw, h, t, GCC)
+        end
+    end
+end
+
+function StreakScreen:tile(bb, x, y, w, px, label, value, sub)
+    local lt = text(string.upper(label), face("sans", px(24)), G55)
+    local vt = text(value, face("number", px(64)), INK, w)
+    local st = textbox(sub, face("sans", px(30)), w, "left", G44, 0.1, PAPER, 2)
+    local h = px(2) + px(20) + lt:getSize().h + px(8) + vt:getSize().h + px(8) + st:getSize().h
+    if bb then
+        rect(bb, x, y, w, px(2), INK)
+        local cy = y + px(22)
+        lt:paintTo(bb, x, cy); cy = cy + lt:getSize().h + px(8)
+        vt:paintTo(bb, x, cy); cy = cy + vt:getSize().h + px(8)
+        st:paintTo(bb, x, cy)
+    end
+    lt:free(); vt:free(); st:free()
+    return h
+end
+
+-- The reader: streak and best run, the strip, the note, then two tiles.
+function StreakScreen:readerBand(bb, x, y, w, px, stats)
+    local nt = text(tostring(stats.streak or 0), face("number", px(96)))
+    local ut = text("day streak", face("sans", px(34)))
+    local bt = stats.best_line and text(stats.best_line, face("sans", px(32)), G44) or nil
+    local note = textbox(stats.note or "", face("serif", px(40)), w, "left", INK, 0.1, PAPER, 2)
+    local row_h = nt:getSize().h
+    local strip_h = px(56)
+    local tile_w = math.floor((w - px(40)) / 2)
+    local tile_h = math.max(
+        self:tile(nil, x, 0, tile_w, px, "This week", stats.week.value, stats.week.sub),
+        self:tile(nil, x, 0, tile_w, px, "Books this year", stats.books.value, stats.books.sub))
+    local h = px(2) + px(36) + row_h + px(16) + strip_h + px(16) + note:getSize().h + px(36) + tile_h
+    if bb then
+        rect(bb, x, y, w, px(2), INK)
+        local cy = y + px(38)
+        nt:paintTo(bb, x, cy)
+        local base = cy + nt:getBaseline()
+        ut:paintTo(bb, x + nt:getSize().w + px(12), base - ut:getBaseline())
+        if bt then bt:paintTo(bb, x + w - bt:getSize().w, base - bt:getBaseline()) end
+        cy = cy + row_h + px(16)
+        self:strip(bb, x, cy, w, strip_h, px, stats.strip)
+        cy = cy + strip_h + px(16)
+        note:paintTo(bb, x, cy)
+        cy = cy + note:getSize().h + px(36)
+        self:tile(bb, x, cy, tile_w, px, "This week", stats.week.value, stats.week.sub)
+        self:tile(bb, x + tile_w + px(40), cy, tile_w, px, "Books this year", stats.books.value, stats.books.sub)
+    end
+    nt:free(); ut:free(); note:free()
+    if bt then bt:free() end
+    return h
+end
+
+-- Shown in place of the reader band when Reading statistics is off.
 function StreakScreen:hint(bb, x, y, w, px, align)
     local talign = align == "center" and "center" or "left"
-    local note = textbox(Format.STATS_OFF_NOTE, face("serif", px(34)), w, talign, INK, 0.1)
-    local sub = textbox(Format.STATS_OFF_HINT, face("sans", px(22)), w, talign, G44)
+    local note = textbox(Format.STATS_OFF_NOTE, face("serif", px(40)), w, talign, INK, 0.1)
+    local sub = textbox(Format.STATS_OFF_HINT, face("sans", px(30)), w, talign, G44)
     local nh, sh = note:getSize().h, sub:getSize().h
     if bb then
-        note:paintTo(bb, x, y)
-        sub:paintTo(bb, x, y + nh + px(8))
+        rect(bb, x, y, w, px(2), INK)
+        note:paintTo(bb, x, y + px(38))
+        sub:paintTo(bb, x, y + px(38) + nh + px(10))
     end
     note:free(); sub:free()
-    return nh + px(8) + sh
+    return px(38) + nh + px(10) + sh
+end
+
+local function lower(self, bb, x, y, w, px, m)
+    if m.stats then return self:readerBand(bb, x, y, w, px, m.stats) end
+    return self:hint(bb, x, y, w, px, "left")
 end
 
 -- -------------------------------------------------------------- layouts ---
 
+local MARGIN = { top = 56, side = 56, bottom = 52 }
+
 function StreakScreen:paintPortrait(bb, x0, y0, W, H, m)
     local px, ox, oy = scaler(W, H, 1264, 1680)
-    local left = x0 + ox + px(96)
-    local cw = W - 2 * ox - 2 * px(96)
-    local top, bottom = y0 + oy + px(80), y0 + H - oy - px(76)
-    local gap = px(32)
+    local left = x0 + ox + px(MARGIN.side)
+    local cw = W - 2 * ox - 2 * px(MARGIN.side)
+    local top, bottom = y0 + oy + px(MARGIN.top), y0 + H - oy - px(MARGIN.bottom)
+    local min_gap = px(36)
 
-    local y = top + self:header(bb, left, top, cw, px, m.header) + gap
+    local hh = self:header(nil, left, 0, cw, px, m.header)
+    local tl_h = self:timeline(nil, left, 0, cw, px, m.book)
+    local lo_h = lower(self, nil, left, 0, cw, px, m)
+    local band_max = (bottom - top) - hh - tl_h - lo_h - 3 * min_gap
+    local band_h = self:bookBand(nil, left, 0, cw, band_max, px, m.book)
+    local gap = math.max(min_gap, math.floor(((bottom - top) - hh - band_h - tl_h - lo_h) / 3))
 
-    local fh, fy
-    if m.stats then
-        fh = self:footer(nil, left, 0, cw, px, m.stats)
-        fy = bottom - fh
-        self:footer(bb, left, fy, cw, px, m.stats)
-    else
-        fh = self:hint(nil, left, 0, cw, px, "center")
-        fy = bottom - fh
-        self:hint(bb, left, fy, cw, px, "center")
-    end
-    local rule_y = fy - px(30)
-    rect(bb, left, rule_y, cw, math.max(1, px(1)), INK)
-
-    local prog_y = rule_y - gap - px(22)
-    self:progress(bb, left, prog_y, cw, px, m.book)
-
-    local tb_h = self:titleBlock(nil, left, 0, cw, px, m.book, "center")
-    local tb_y = prog_y - gap - tb_h
-    self:titleBlock(bb, left, tb_y, cw, px, m.book, "center")
-
-    self:cover(bb, left, y, cw, tb_y - gap - y, px, m.book, "center")
+    local y = top
+    self:header(bb, left, y, cw, px, m.header)
+    y = y + hh + gap
+    self:bookBand(bb, left, y, cw, band_max, px, m.book)
+    y = y + band_h + gap
+    self:timeline(bb, left, y, cw, px, m.book)
+    lower(self, bb, left, bottom - lo_h, cw, px, m)
 end
 
+-- Landscape: the cover full height on the left; the book's text, the
+-- timeline and the reader stacked on the right.
 function StreakScreen:paintLandscape(bb, x0, y0, W, H, m)
     local px, ox, oy = scaler(W, H, 1680, 1264)
-    local left = x0 + ox + px(88)
-    local cw = W - 2 * ox - 2 * px(88)
-    local top, bottom = y0 + oy + px(72), y0 + H - oy - px(64)
-    local gap = px(32)
+    local left = x0 + ox + px(MARGIN.side)
+    local cw = W - 2 * ox - 2 * px(MARGIN.side)
+    local top, bottom = y0 + oy + px(MARGIN.top), y0 + H - oy - px(MARGIN.bottom)
+    local min_gap = px(28)
 
-    local y = top + self:header(bb, left, top, cw, px, m.header) + px(36)
+    local hh = self:header(bb, left, top, cw, px, m.header)
+    local y = top + hh + px(36)
     local stage_h = bottom - y
-    local _, _, cover_w = self:cover(bb, left, y, math.floor(cw * 0.46), stage_h, px, m.book, "left")
-    local rx = left + cover_w + px(16) + px(72)
+    local shadow = px(14)
+    local cvw, cvh = self:coverSize(m.book, math.floor(cw * 0.42) - shadow, stage_h - shadow, px)
+    self:cover(bb, left, y + math.floor((stage_h - shadow - cvh) / 2), cvw, cvh, px, m.book)
+
+    local rx = left + cvw + shadow + px(56)
     local rw = left + cw - rx
+    local top_h, bottom_h = self:bookText(nil, rx, 0, rw, 0, px, m.book, true)
+    local text_h = top_h + px(32) + bottom_h
+    local tl_h = self:timeline(nil, rx, 0, rw, px, m.book)
+    local lo_h = lower(self, nil, rx, 0, rw, px, m)
+    local gap = math.max(min_gap, math.floor((stage_h - text_h - tl_h - lo_h) / 2))
 
-    local tb_h = self:titleBlock(nil, rx, 0, rw, px, m.book, "left")
-    local lower_h
-    if m.stats then
-        lower_h = self:chain(nil, rx, 0, px(330), px(36), px(8), px(18), px, m.stats.cells)
-            + px(30) + self:streak(nil, rx, 0, rw, px, m.stats, "left")
-    else
-        lower_h = self:hint(nil, rx, 0, rw, px, "left")
-    end
-    local total = tb_h + gap + px(22) + gap + px(30) + lower_h
-    local ry = y + math.max(0, math.floor((stage_h - total) / 2))
-
-    self:titleBlock(bb, rx, ry, rw, px, m.book, "left")
-    ry = ry + tb_h + gap
-    self:progress(bb, rx, ry, rw, px, m.book)
-    ry = ry + px(22) + gap
-    rect(bb, rx, ry, rw, math.max(1, px(1)), INK)
-    ry = ry + px(30)
-    if m.stats then
-        ry = ry + self:chain(bb, rx, ry, px(330), px(36), px(8), px(18), px, m.stats.cells) + px(30)
-        self:streak(bb, rx, ry, rw, px, m.stats, "left")
-    else
-        self:hint(bb, rx, ry, rw, px, "left")
-    end
+    self:bookText(bb, rx, y, rw, text_h, px, m.book, true)
+    local tl_y = y + text_h + gap
+    self:timeline(bb, rx, tl_y, rw, px, m.book)
+    -- Never let the reader band ride up into the timeline.
+    lower(self, bb, rx, math.max(bottom - lo_h, tl_y + tl_h + min_gap), rw, px, m)
 end
 
--- Nothing to show a cover for: the chain takes the stage.
+-- Nothing to show a cover for: a short line, then the reader band.
 function StreakScreen:paintNoBook(bb, x0, y0, W, H, m)
     local landscape = W > H
     local px, ox, oy = scaler(W, H, landscape and 1680 or 1264, landscape and 1264 or 1680)
-    local pad = landscape and 88 or 96
-    local left = x0 + ox + px(pad)
-    local cw = W - 2 * ox - 2 * px(pad)
-    local top = y0 + oy + px(landscape and 72 or 80)
-    local bottom = y0 + H - oy - px(landscape and 64 or 76)
+    local left = x0 + ox + px(MARGIN.side)
+    local cw = W - 2 * ox - 2 * px(MARGIN.side)
+    local top, bottom = y0 + oy + px(MARGIN.top), y0 + H - oy - px(MARGIN.bottom)
 
-    local y = top + self:header(bb, left, top, cw, px, m.header) + px(48)
+    local hh = self:header(bb, left, top, cw, px, m.header)
+    local lo_h = lower(self, nil, left, 0, cw, px, m)
+    local lo_y = bottom - lo_h
+    lower(self, bb, left, lo_y, cw, px, m)
 
-    local title = textbox(Format.NO_BOOK_TITLE, face("title", px(62)), cw, "center", INK, 0.05)
-    local sub = textbox(Format.NO_BOOK_SUB, face("sans", px(24)), cw, "center", G44)
-    local th = title:getSize().h + px(8) + sub:getSize().h
-
-    local chain_w = math.min(px(820), cw)
-    local cell_h = landscape and px(64) or px(90)
-    local chain_h, streak_h = 0, 0
-    if m.stats then
-        chain_h = self:chain(nil, left, 0, chain_w, cell_h, px(14), px(24), px, m.stats.cells)
-        streak_h = self:streak(nil, left, 0, cw, px, m.stats, "center")
-    else
-        streak_h = self:hint(nil, left, 0, cw, px, "center")
-    end
-    local gap = px(56)
-    local total = th + gap + (m.stats and (chain_h + gap) or 0) + streak_h
-    local cy = y + math.max(0, math.floor((bottom - y - total) / 2))
-
-    title:paintTo(bb, left, cy)
-    sub:paintTo(bb, left, cy + title:getSize().h + px(8))
+    local title = textbox(Format.NO_BOOK_TITLE, face("title", px(72)), cw, "center", INK, 0.05)
+    local sub = textbox(Format.NO_BOOK_SUB, face("sans", px(30)), cw, "center", G44)
+    local th = title:getSize().h + px(12) + sub:getSize().h
+    local area_top = top + hh
+    local ty = area_top + math.max(0, math.floor((lo_y - area_top - th) / 2))
+    title:paintTo(bb, left, ty)
+    sub:paintTo(bb, left, ty + title:getSize().h + px(12))
     title:free(); sub:free()
-    cy = cy + th + gap
-    if m.stats then
-        self:chain(bb, left + math.floor((cw - chain_w) / 2), cy, chain_w, cell_h, px(14), px(24), px, m.stats.cells)
-        cy = cy + chain_h + gap
-        self:streak(bb, left, cy, cw, px, m.stats, "center")
-    else
-        self:hint(bb, left, cy, cw, px, "center")
-    end
 end
 
 return StreakScreen

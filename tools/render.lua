@@ -185,7 +185,7 @@ require("ui/uimanager"):close(ssw)
 Screensaver:cleanup()
 
 -- The fallback: a model that makes drawing fail must still paint something.
-local bad = StreakScreen:new{ model = { book = { title = "x", meta = "not a table" }, header = {} }, width = 1264, height = 1680 }
+local bad = StreakScreen:new{ model = { book = { title = "x", ticks = "not a table" }, header = {} }, width = 1264, height = 1680 }
 local before = #warned
 png(bad, "fallback", 1264, 1680)
 check(#warned > before, "a drawing error falls back to a plain sleep screen")

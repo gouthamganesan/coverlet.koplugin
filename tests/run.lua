@@ -70,14 +70,17 @@ eq(variants[2], "Franz Kafka · 58% · 11 min left in this chapter", "meta gener
 eq(variants[3], "58% · 11 min left in this chapter", "meta without author")
 eq(F.metaVariants("Franz Kafka", 1, base, true)[1], "Franz Kafka · finished", "meta finished")
 eq(F.metaVariants(nil, 0.58, base, false)[1], "58% · 11 min left in Part II", "meta no author")
+eq(F.progressLine(0.69, { has_chapters = true, chapter_title = "Chapter Thirteen", chapter_seconds = 1320 }, false),
+    "69% · 22 min left in Chapter Thirteen", "progress line keeps the chapter name")
+eq(F.progressLine(1, base, true), "finished", "progress line finished")
 
 -- -------------------------------------------------------- streak note ---
 eq(F.streakNote(0, false, 12), F.NOTE_NEW, "note no run")
-eq(F.streakNote(4, false, 12), F.NOTE_EMPTY, "note today empty")
+eq(F.streakNote(4, false, 12), "Read today to make it 5.", "note streak guard")
 eq(F.streakNote(5, true, 12), F.NOTE_IN, "note today read")
 eq(F.streakNote(31, true, 31), F.NOTE_BEST, "note longest")
 eq(F.streakNote(1, true, 1), F.NOTE_IN, "note first day is not a record")
-eq(F.streakNote(4, false, 4), F.NOTE_EMPTY, "note empty wins over record")
+eq(F.streakNote(4, false, 4), "Read today to make it 5.", "note guard wins over record")
 
 -- --------------------------------------------------------- stats line ---
 eq(F.statsLine(12, 4, 7200, 14, 24), "Best run: 12 days · 2 h 00 min this week · 14 of 24 books", "stats default")
@@ -164,6 +167,64 @@ local ny = os.time{ year = 2027, month = 1, day = 1, hour = 9 }
 r = C.compute(build(seq("2026-12-30", "m m m")), ny)
 eq(r.streak, 3, "chain across new year")
 eq(C.weekdayIndex(ny), 4, "1 Jan 2027 is a Friday")
+
+-- ------------------------------------------------- hero and forecast ---
+local a, b = F.heroTime(2280)
+eq(a .. " " .. b, "38 min to the end", "hero minutes")
+a, b = F.heroTime(24000)
+eq(a .. " " .. b, "6 h 40 min to the end", "hero hours")
+a, b = F.heroTime(20)
+eq(a, "1", "hero never below 1 min")
+a, b = F.heroPages(64, 110)
+eq(a .. " " .. b, "64 of 110 pages", "hero pages")
+
+local fc = F.forecast(2280, 0, 1860, fri)
+eq(fc.line, "At your pace, done Saturday.", "forecast next day")
+eq(fc.label, "SAT", "forecast label weekday")
+eq(math.abs(fc.today_share - 1860 / 2280) < 1e-9, true, "forecast today share")
+fc = F.forecast(2280, 0, 3000, fri)
+eq(fc.line, "At your pace, done today.", "forecast today")
+eq(fc.label, nil, "forecast today has no label")
+eq(fc.today_share, 1, "forecast today covers the rest")
+fc = F.forecast(2280, 2000, 1860, fri)
+eq(fc.line, "At your pace, done Sunday.", "forecast after today's average is used up")
+eq(fc.today_share, 0, "forecast nothing left for today")
+fc = F.forecast(40000, 0, 1800, fri)
+eq(fc.line, "At your pace, done 17 October.", "forecast date past six days")
+eq(fc.label, "17 OCT", "forecast label date")
+fc = F.forecast(1860 + 6 * 1860, 0, 1860, fri)
+eq(fc.line, "At your pace, done Thursday.", "forecast six days out is still a weekday")
+eq(F.forecast(2280, 0, nil, fri), nil, "forecast needs an average day")
+eq(F.forecast(0, 0, 1860, fri), nil, "forecast needs time left")
+
+eq(F.bestLine(12, 4), "Best run: 12 days", "best line")
+eq(F.bestLine(4, 4), nil, "best line hidden when current")
+eq(F.bestLine(1, 0), nil, "best line hidden under 2")
+eq(F.goalPace(24, fri), 18, "goal pace by today")
+local v, sub = F.booksTile(14, 24, fri)
+eq(v .. " | " .. sub, "14 of 24 | Goal pace: 18 by today", "books tile with goal")
+v, sub = F.booksTile(14, nil, fri)
+eq(v .. " | " .. sub, "14 | finished so far", "books tile without goal")
+v, sub = F.weekTile(7200, 7440)
+eq(v .. " | " .. sub, "2 h 00 min | Last week: 2 h 04 min", "week tile")
+
+-- ------------------------------------------------------------- strip ---
+local st = C.strip(4, 12, false)
+eq(st.n .. " " .. st.filled .. " " .. tostring(st.pending) .. " " .. tostring(st.bar), "12 4 true false", "strip against best run")
+st = C.strip(5, 12, true)
+eq(tostring(st.pending), "false", "strip today read")
+st = C.strip(3, 3, false)
+eq(st.n, 7, "strip at least seven")
+st = C.strip(0, 12, false)
+eq(tostring(st.pending), "false", "strip no run, nothing pending")
+st = C.strip(31, 31, true)
+eq(tostring(st.bar), "true", "strip long run becomes a bar")
+
+r = C.compute(build(history), fri)
+eq(r.last_week_seconds, 8100, "chain last week")
+eq(r.today_seconds, 0, "chain today seconds")
+eq(math.abs(r.avg_day_seconds - 35100 / 19) < 1e-6, true, "chain average reading day")
+eq(C.compute({}, fri).avg_day_seconds, nil, "chain no average without history")
 
 -- ------------------------------------------------------ chapter marks ---
 local sharp = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389, 396, 401, 403, 410, 438, 439 }

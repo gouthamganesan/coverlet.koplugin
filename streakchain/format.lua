@@ -16,14 +16,13 @@ F.SEP = " · "
 F.CHAPTER_TITLE_MAX = 20
 F.LOW_BATTERY = 15
 
-F.NOTE_EMPTY = "Today’s square is still empty."
 F.NOTE_IN = "Today is in the chain."
 F.NOTE_BEST = "Your longest run so far."
 F.NOTE_NEW = "One page starts a new run."
 
 F.NO_BOOK_TITLE = "No book open"
 F.NO_BOOK_SUB = "Your shelf is one tap away."
-F.STATS_OFF_NOTE = "Your chain appears once Reading statistics is on."
+F.STATS_OFF_NOTE = "Your streak appears once Reading statistics is on."
 F.STATS_OFF_HINT = "Turn it on in Tools · Reading statistics."
 
 local function trim(s)
@@ -140,6 +139,15 @@ function F.metaLine(author, pct, next_step, finished)
     return table.concat(parts, F.SEP)
 end
 
+-- The meta line without the author, for layouts that give the author its own
+-- line: "58% · 11 min left in Part II", or "finished".
+function F.progressLine(pct, step_opts, finished)
+    local o = {}
+    for k, v in pairs(step_opts or {}) do o[k] = v end
+    o.finished = finished
+    return F.metaLine(nil, pct, F.nextStep(o), finished)
+end
+
 -- The meta line, from most to least detailed. The screen uses the first one
 -- that fits on a single line.
 function F.metaVariants(author, pct, step_opts, finished)
@@ -158,11 +166,91 @@ function F.metaVariants(author, pct, step_opts, finished)
     return variants
 end
 
+-- Streak guard: the run is alive but today isn't in it yet.
+function F.noteGuard(streak)
+    return "Read today to make it " .. (streak + 1) .. "."
+end
+
 function F.streakNote(streak, read_today, best)
     if (streak or 0) == 0 then return F.NOTE_NEW end
-    if not read_today then return F.NOTE_EMPTY end
+    if not read_today then return F.noteGuard(streak) end
     if streak >= 2 and streak >= (best or 0) then return F.NOTE_BEST end
     return F.NOTE_IN
+end
+
+-- "Best run: 12 days", only while the best run is ahead of the current one.
+function F.bestLine(best, streak)
+    if best and best >= 2 and best > (streak or 0) then
+        return "Best run: " .. best .. " days"
+    end
+    return nil
+end
+
+-- The hero: time to the end as a number and its unit, "38" / "min to the end"
+-- or "6 h 40" / "min to the end".
+function F.heroTime(seconds)
+    local m = math.max(1, math.ceil((seconds or 0) / 60))
+    if m < 60 then return tostring(m), "min to the end" end
+    return string.format("%d h %02d", math.floor(m / 60), m % 60), "min to the end"
+end
+
+-- Without reading statistics there is no pace, so the hero is the page.
+function F.heroPages(page, total)
+    return tostring(page), "of " .. total .. " pages"
+end
+
+local function dayAfter(now, n)
+    local d = os.date("*t", now)
+    return os.time{ year = d.year, month = d.month, day = d.day + n, hour = 12 }
+end
+
+--[[
+The finish forecast. Today's share is what's left of one average reading day
+(less whatever was read today already); every later day adds one more
+average day. Returns nil when there is no pace to forecast from.
+  line         "At your pace, done Saturday." / "... done 12 October." / "... done today."
+  today_share  the part of what's left that today covers, 0..1
+  label        finish-day label under the timeline: "SAT", "12 OCT", or nil (today)
+]]
+function F.forecast(remaining, today_read, avg_day, now)
+    if not (remaining and remaining > 0 and avg_day and avg_day > 0) then return nil end
+    now = now or os.time()
+    local budget = math.max(0, avg_day - (today_read or 0))
+    if remaining <= budget then
+        return { line = "At your pace, done today.", today_share = 1 }
+    end
+    local days = math.ceil((remaining - budget) / avg_day)
+    local t = dayAfter(now, days)
+    local line, label
+    if days <= 6 then
+        line = "At your pace, done " .. os.date("%A", t) .. "."
+        label = string.upper(os.date("%a", t))
+    else
+        local day = tonumber(os.date("%d", t))
+        line = "At your pace, done " .. day .. " " .. os.date("%B", t) .. "."
+        label = day .. " " .. string.upper(os.date("%b", t))
+    end
+    return { line = line, today_share = budget / remaining, label = label }
+end
+
+-- Where a yearly goal says you should be by today.
+function F.goalPace(goal, now)
+    now = now or os.time()
+    local d = os.date("*t", now)
+    local year_days = os.date("*t", os.time{ year = d.year, month = 12, day = 31, hour = 12 }).yday
+    return math.floor(goal * d.yday / year_days + 0.5)
+end
+
+function F.weekTile(week_seconds, last_week_seconds)
+    return F.total(week_seconds), "Last week: " .. F.total(last_week_seconds)
+end
+
+function F.booksTile(books, goal, now)
+    books = books or 0
+    if goal and goal > 0 then
+        return books .. " of " .. goal, "Goal pace: " .. F.goalPace(goal, now) .. " by today"
+    end
+    return tostring(books), "finished so far"
 end
 
 function F.statsLine(best, streak, week_seconds, books, goal)
