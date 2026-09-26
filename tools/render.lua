@@ -70,6 +70,18 @@ for _, s in ipairs(states) do
         png(StreakScreen:new{ model = model, width = w, height = h }, name, w, h)
     end)
     check(ok and #warned == before, "render " .. name, err or warned[#warned])
+    -- The cover must keep its own pixels whenever it fits: never enlarged,
+    -- never reshaped, only shrunk when the screen has no room.
+    local b = model.book
+    if b and b.cover and b.cover_w then
+        local dw, dh = b.cover:getWidth(), b.cover:getHeight()
+        check(dw <= b.cover_w and dh <= b.cover_h, name .. ": cover never enlarged", dw .. "x" .. dh)
+        check(math.abs(dw / dh - b.cover_w / b.cover_h) < 0.01, name .. ": cover keeps its proportions", dw .. "x" .. dh)
+        if name == "18-many-chapters" then
+            check(dw == b.cover_w and dh == b.cover_h, name .. ": Sharp Objects cover drawn at its own 500x667",
+                dw .. "x" .. dh)
+        end
+    end
 end
 
 -- --------------------------------------------- 2. statistics SQL, synthetic ---
