@@ -510,36 +510,66 @@ function StreakScreen:tile(bb, x, y, w, px, label, value, sub)
     return h
 end
 
--- The reader: streak and best run, the strip, the note, then two tiles.
+-- A number with its unit on the same baseline, and optional text flush right.
+function StreakScreen:numberRow(bb, x, y, w, px, num, unit, right, num_px, unit_px, right_bold)
+    local nt = text(num, face("number", num_px))
+    local ut = text(unit, face("sans", unit_px))
+    local rt = right and text(right, face(right_bold and "sansBold" or "sans", px(32)), right_bold and INK or G44) or nil
+    local h = nt:getSize().h
+    if bb then
+        nt:paintTo(bb, x, y)
+        local base = y + nt:getBaseline()
+        ut:paintTo(bb, x + nt:getSize().w + px(12), base - ut:getBaseline())
+        if rt then rt:paintTo(bb, x + w - rt:getSize().w, base - rt:getBaseline()) end
+    end
+    nt:free(); ut:free()
+    if rt then rt:free() end
+    return h
+end
+
+function StreakScreen:goalBar(bb, x, y, w, h, px, fraction)
+    local t = math.max(1, px(2))
+    rect(bb, x, y, math.floor(w * math.max(0, math.min(1, fraction or 0))), h, INK)
+    frame(bb, x, y, w, h, t, G99)
+end
+
+-- The reader: today's goal (when one is set in Bookshelf), the streak and
+-- its strip, the note, then this week and books this year.
 function StreakScreen:readerBand(bb, x, y, w, px, stats)
-    local nt = text(tostring(stats.streak or 0), face("number", px(96)))
-    local ut = text("day streak", face("sans", px(34)))
-    local bt = stats.best_line and text(stats.best_line, face("sans", px(32)), G44) or nil
-    local note = textbox(stats.note or "", face("serif", px(40)), w, "left", INK, 0.1, PAPER, 2)
-    local row_h = nt:getSize().h
-    local strip_h = px(56)
+    local daily = stats.daily
+    local note = textbox(stats.note or "", face("serif", daily and px(36) or px(40)), w, "left", INK, 0.1, PAPER, 2)
     local tile_w = math.floor((w - px(40)) / 2)
     local tile_h = math.max(
         self:tile(nil, x, 0, tile_w, px, "This week", stats.week.value, stats.week.sub),
         self:tile(nil, x, 0, tile_w, px, "Books this year", stats.books.value, stats.books.sub))
-    local h = px(2) + px(36) + row_h + px(16) + strip_h + px(16) + note:getSize().h + px(36) + tile_h
+
+    local goal_h, goal_bar = 0, px(24)
+    if daily then
+        goal_h = self:numberRow(nil, x, 0, w, px, daily.num, daily.unit, daily.right, px(96), px(34)) + px(12) + goal_bar + px(22)
+    end
+    local streak_num = daily and px(56) or px(96)
+    local streak_unit = daily and px(30) or px(34)
+    local streak_h = self:numberRow(nil, x, 0, w, px, tostring(stats.streak or 0), "day streak", stats.best_line, streak_num, streak_unit)
+    local strip_h = daily and px(44) or px(56)
+    local h = px(2) + px(30) + goal_h + streak_h + px(12) + strip_h + px(12) + note:getSize().h + px(26) + tile_h
+
     if bb then
         rect(bb, x, y, w, px(2), INK)
-        local cy = y + px(38)
-        nt:paintTo(bb, x, cy)
-        local base = cy + nt:getBaseline()
-        ut:paintTo(bb, x + nt:getSize().w + px(12), base - ut:getBaseline())
-        if bt then bt:paintTo(bb, x + w - bt:getSize().w, base - bt:getBaseline()) end
-        cy = cy + row_h + px(16)
+        local cy = y + px(32)
+        if daily then
+            cy = cy + self:numberRow(bb, x, cy, w, px, daily.num, daily.unit, daily.right, px(96), px(34), daily.done) + px(12)
+            self:goalBar(bb, x, cy, w, goal_bar, px, daily.fraction)
+            cy = cy + goal_bar + px(22)
+        end
+        cy = cy + self:numberRow(bb, x, cy, w, px, tostring(stats.streak or 0), "day streak", stats.best_line, streak_num, streak_unit) + px(12)
         self:strip(bb, x, cy, w, strip_h, px, stats.strip)
-        cy = cy + strip_h + px(16)
+        cy = cy + strip_h + px(12)
         note:paintTo(bb, x, cy)
-        cy = cy + note:getSize().h + px(36)
+        cy = cy + note:getSize().h + px(26)
         self:tile(bb, x, cy, tile_w, px, "This week", stats.week.value, stats.week.sub)
         self:tile(bb, x + tile_w + px(40), cy, tile_w, px, "Books this year", stats.books.value, stats.books.sub)
     end
-    nt:free(); ut:free(); note:free()
-    if bt then bt:free() end
+    note:free()
     return h
 end
 
@@ -572,7 +602,7 @@ function StreakScreen:paintPortrait(bb, x0, y0, W, H, m)
     local left = x0 + ox + px(MARGIN.side)
     local cw = W - 2 * ox - 2 * px(MARGIN.side)
     local top, bottom = y0 + oy + px(MARGIN.top), y0 + H - oy - px(MARGIN.bottom)
-    local min_gap = px(36)
+    local min_gap = px(24)
 
     local hh = self:header(nil, left, 0, cw, px, m.header)
     local tl_h = self:timeline(nil, left, 0, cw, px, m.book)

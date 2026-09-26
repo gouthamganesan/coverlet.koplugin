@@ -205,32 +205,55 @@ local function dayAfter(now, n)
 end
 
 --[[
-The finish forecast. Today's share is what's left of one average reading day
-(less whatever was read today already); every later day adds one more
-average day. Returns nil when there is no pace to forecast from.
-  line         "At your pace, done Saturday." / "... done 12 October." / "... done today."
+The finish forecast, framed around the daily goal rather than reading speed.
+Each day from today reads one daily session: the daily goal when one is set,
+otherwise an average reading day. Today's share is what's left of today's
+session. Returns nil when there is nothing to forecast from.
+  line         "45 min a day finishes it Saturday." / "Today’s goal finishes it."
+               or, without a daily goal, "Done by Saturday." / "Done today."
   today_share  the part of what's left that today covers, 0..1
   label        finish-day label under the timeline: "SAT", "12 OCT", or nil (today)
 ]]
-function F.forecast(remaining, today_read, avg_day, now)
-    if not (remaining and remaining > 0 and avg_day and avg_day > 0) then return nil end
+function F.forecast(remaining, today_read, daily, now, goal_minutes)
+    if not (remaining and remaining > 0 and daily and daily > 0) then return nil end
     now = now or os.time()
-    local budget = math.max(0, avg_day - (today_read or 0))
+    local budget = math.max(0, daily - (today_read or 0))
     if remaining <= budget then
-        return { line = "At your pace, done today.", today_share = 1 }
+        return { line = goal_minutes and "Today’s goal finishes it." or "Done today.", today_share = 1 }
     end
-    local days = math.ceil((remaining - budget) / avg_day)
+    local days = math.ceil((remaining - budget) / daily)
     local t = dayAfter(now, days)
-    local line, label
+    local when, label
     if days <= 6 then
-        line = "At your pace, done " .. os.date("%A", t) .. "."
+        when = os.date("%A", t)
         label = string.upper(os.date("%a", t))
     else
         local day = tonumber(os.date("%d", t))
-        line = "At your pace, done " .. day .. " " .. os.date("%B", t) .. "."
+        when = day .. " " .. os.date("%B", t)
         label = day .. " " .. string.upper(os.date("%b", t))
     end
+    local line = goal_minutes and (goal_minutes .. " min a day finishes it " .. when .. ".") or ("Done by " .. when .. ".")
     return { line = line, today_share = budget / remaining, label = label }
+end
+
+--[[
+Today's goal, the top row of the reader band.
+  num, unit   "33" / "min to today’s goal", or "52" / "min today" once done
+  right       "12 of 45 min", or "Goal done"
+  fraction    0..1 of the goal read today
+]]
+function F.dailyGoal(today_seconds, goal_minutes)
+    local read = math.floor((today_seconds or 0) / 60)
+    if read >= goal_minutes then
+        return { num = tostring(read), unit = "min today", right = "Goal done", fraction = 1, done = true }
+    end
+    return {
+        num = tostring(goal_minutes - read),
+        unit = "min to today’s goal",
+        right = read .. " of " .. goal_minutes .. " min",
+        fraction = read / goal_minutes,
+        done = false,
+    }
 end
 
 -- Where a yearly goal says you should be by today.

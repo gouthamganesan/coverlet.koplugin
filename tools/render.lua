@@ -136,6 +136,26 @@ check(pace and pace.pages == 100 and math.abs((pace.avg or 0) - (30 * 60 + 50) /
 check(Data.bookPace(db_path, "zzz") == nil, "sql unknown book has no pace")
 check(Data.readDays("/nonexistent/dir/statistics.sqlite3") == nil, "sql missing database is handled")
 
+-- ------------------------------------------- goals from Bookshelf's file ---
+lfs.mkdir(DataStorage:getSettingsDir())
+local mm_path = DataStorage:getSettingsDir() .. "/bookshelf_micromodules.lua"
+local function writeGoals(tbl)
+    local LuaSettings = require("luasettings")
+    os.remove(mm_path)
+    local ls = LuaSettings:open(mm_path)
+    for k, v in pairs(tbl) do ls:saveSetting(k, v) end
+    ls:flush()
+end
+check(next(Data.goals()) == nil, "no Bookshelf file means no goals")
+writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6, micromodule_reading_goal_weekly = 600 })
+local goals = Data.goals()
+check(goals.daily == 45 and goals.yearly == 6, "goals read from Bookshelf's file", goals.daily .. "/" .. tostring(goals.yearly))
+writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6,
+    micromodule_reading_goal_active = { daily = false, weekly = true, monthly = true, yearly = true } })
+goals = Data.goals()
+check(goals.daily == nil and goals.yearly == 6, "a goal switched off in Bookshelf is left out")
+writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6 })
+
 -- ------------------------------ 3. sleep-screen hook through core, end to end ---
 -- Put the synthetic database where KOReader looks for it, then suspend the
 -- way core does: Screensaver:setup() followed by Screensaver:show().
@@ -154,7 +174,7 @@ check(registered, "plugin registers its menu")
 
 local menu_items = {}
 plugin:addToMainMenu(menu_items)
-check(menu_items.streakchain and #menu_items.streakchain.sub_item_table == 3, "menu has three entries")
+check(menu_items.streakchain and #menu_items.streakchain.sub_item_table == 2, "menu has two entries, no goal setting")
 
 G_reader_settings:saveSetting("screensaver_type", "random_image")
 plugin:toggleSleepScreen()
@@ -176,6 +196,7 @@ check(ssw ~= nil, "a sleep screen widget is shown")
 local ours = ssw and ssw.widget
 check(ours and ours.model and ours.model.stats ~= nil, "hook built a model with stats from the database")
 check(ours and ours.model and ours.model.book == nil, "no last file means the no-book layout")
+check(ours and ours.model.stats.goal_minutes == 45, "hook uses Bookshelf's daily goal")
 if ours then
     local W, H = require("device").screen:getWidth(), require("device").screen:getHeight()
     png(ours, "hook-end-to-end", W, H)

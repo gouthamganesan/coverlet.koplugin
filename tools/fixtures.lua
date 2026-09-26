@@ -22,11 +22,18 @@ local function seq(days, start_key, codes)
     return days
 end
 
-local function stats(days, books, goal)
+-- Goals as set in Bookshelf's Reading goal module: 45 min a day, 6 books a year.
+local DAILY, YEARLY = 45, 6
+
+local function stats(days, books, yearly, daily)
     local c = C.compute(days, NOW)
+    if daily == nil then daily = DAILY elseif daily == 0 then daily = nil end
+    if yearly == nil then yearly = YEARLY elseif yearly == 0 then yearly = nil end
     local wv, ws = F.weekTile(c.week_seconds, c.last_week_seconds)
-    local bv, bs = F.booksTile(books or 14, goal == nil and 24 or (goal ~= 0 and goal or nil), NOW)
+    local bv, bs = F.booksTile(books or 4, yearly, NOW)
     return {
+        goal_minutes = daily,
+        daily = daily and F.dailyGoal(c.today_seconds, daily) or nil,
         streak = c.streak, best = c.best, read_today = c.read_today,
         today_seconds = c.today_seconds, avg_day_seconds = c.avg_day_seconds,
         note = F.streakNote(c.streak, c.read_today, c.best),
@@ -61,8 +68,9 @@ local function book(o, st)
     if not finished then
         if step.book_seconds then
             b.hero = { F.heroTime(step.book_seconds) }
-            if (o.timed or 40) >= 10 and st and st.avg_day_seconds then
-                b.forecast = F.forecast(step.book_seconds, st.today_seconds, st.avg_day_seconds, NOW)
+            local daily = st and (st.goal_minutes and st.goal_minutes * 60 or st.avg_day_seconds)
+            if (o.timed or 40) >= 10 and daily then
+                b.forecast = F.forecast(step.book_seconds, st.today_seconds, daily, NOW, st.goal_minutes)
             end
         elseif o.page then
             b.hero = { F.heroPages(o.page, o.total) }
@@ -108,6 +116,10 @@ return function(cover)
         "More from W&N Fiction", "Copyright Page" }
     for i, p in ipairs(starts) do table.insert(sharp_chapters, { pos = (p - 1) / 440, title = names[i] }) end
 
+    local goal_done = seq(history(), "2026-09-25", "3120")
+    local s_done = stats(goal_done)
+    local s_nogoal = stats(history(), 14, 0, 0)
+
     local list = {
         { "01-default", { header = header(), book = kafka(cover, s_default), stats = s_default } },
         { "02-read-today", { header = header(), book = kafka(cover, s_read), stats = s_read } },
@@ -119,7 +131,7 @@ return function(cover)
         { "06-last-chapter", { header = header(), book = kafka(cover, s_default, { pct = 0.94, page = 104,
             step = { has_chapters = true, in_last_chapter = true, book_seconds = 360 } }), stats = s_default } },
         { "07-finished", { header = header(), book = kafka(cover, s_read, { pct = 1, page = 110, finished = true }),
-            stats = stats(read_today, 15) } },
+            stats = stats(read_today, 5) } },
         { "08-no-chapters-far-date", { header = header(), book = book({
             title = "The Simplicity Shift", author = "Scott Jenson", pct = 0.2, page = 38, total = 188,
             step = { has_chapters = false, book_seconds = 40000 }, cover = cover("simplicity") }, s_default),
@@ -146,6 +158,8 @@ return function(cover)
         { "16-landscape-no-book", { header = header(), stats = s_default }, 1680, 1264 },
         { "17-landscape-stats-off", { header = header(), book = kafka(cover, nil, {
             step = { has_chapters = true, chapter_title = "Part II", chapter_pages = 12 } }) }, 1680, 1264 },
+        { "19-daily-goal-done", { header = header(), book = kafka(cover, s_done), stats = s_done } },
+        { "20-no-goals-set", { header = header(), book = kafka(cover, s_nogoal), stats = s_nogoal } },
         { "18-many-chapters", { header = header(), book = book({
             title = "Sharp Objects", author = "Gillian Flynn", pct = 305 / 440, page = 306, total = 440, chapters = sharp_chapters,
             step = { has_chapters = true, chapter_title = "Chapter Thirteen", chapter_seconds = 1320, book_seconds = 8040 },

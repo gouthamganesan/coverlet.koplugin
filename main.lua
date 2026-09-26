@@ -139,28 +139,6 @@ function StreakChain:preview()
     UIManager:show(preview, "full")
 end
 
-function StreakChain:setGoal(touchmenu_instance)
-    local SpinWidget = require("ui/widget/spinwidget")
-    UIManager:show(SpinWidget:new{
-        title_text = _("Books a year"),
-        info_text = _("Set 0 for no goal."),
-        value = G_reader_settings:readSetting("streakchain_goal") or 0,
-        value_min = 0,
-        value_max = 365,
-        value_step = 1,
-        value_hold_step = 5,
-        ok_text = _("Set"),
-        callback = function(spin)
-            if spin.value > 0 then
-                G_reader_settings:saveSetting("streakchain_goal", spin.value)
-            else
-                G_reader_settings:delSetting("streakchain_goal")
-            end
-            if touchmenu_instance then touchmenu_instance:updateItems() end
-        end,
-    })
-end
-
 function StreakChain:addToMainMenu(menu_items)
     menu_items.streakchain = {
         text = _("Streak chain"),
@@ -175,17 +153,6 @@ function StreakChain:addToMainMenu(menu_items)
                 text = _("Preview"),
                 keep_menu_open = false,
                 callback = function() self:preview() end,
-            },
-            {
-                text_func = function()
-                    local goal = G_reader_settings:readSetting("streakchain_goal")
-                    if goal then
-                        return _("Yearly goal") .. ": " .. goal .. " " .. _("books")
-                    end
-                    return _("Yearly goal") .. ": " .. _("none")
-                end,
-                keep_menu_open = true,
-                callback = function(touchmenu_instance) self:setGoal(touchmenu_instance) end,
             },
         },
     }

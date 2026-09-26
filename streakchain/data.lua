@@ -14,6 +14,7 @@ so streakchain/screen.lua only ever draws and never asks KOReader anything.
       cover = BlitBuffer | nil,                    -- freed by the screen
   }
   model.stats  = nil (Reading statistics off) | {
+      goal_minutes, daily = { num, unit, right, fraction, done } | nil (no daily goal),
       streak, best, read_today, note, best_line, strip = { n, filled, pending, best, bar },
       week = { value, sub }, books = { value, sub },
   }
@@ -113,6 +114,38 @@ function Data.bookPace(path, md5)
     end)
 end
 
+--[[
+Reading goals are set in Bookshelf's Reading goal module, not here: daily in
+minutes, yearly in books, each with its own on/off switch. Read them live
+from Bookshelf's settings store when Bookshelf is loaded, else from its file.
+Returns { daily = minutes | nil, yearly = books | nil }.
+]]
+local BOOKSHELF_DEFAULTS = { daily = 30, yearly = 24 }
+
+function Data.goals()
+    local read
+    local store = package.loaded["lib/bookshelf_settings_store"]
+    if type(store) == "table" and type(store.read) == "function" then
+        read = function(key, default) return store.read(key, default) end
+    else
+        local path = DataStorage:getSettingsDir() .. "/bookshelf_micromodules.lua"
+        if lfs.attributes(path, "mode") ~= "file" then return {} end
+        local ok, settings = pcall(function() return require("luasettings"):open(path) end)
+        if not ok or not settings then return {} end
+        read = function(key, default) return settings:readSetting(key, default) end
+    end
+    local active = read("micromodule_reading_goal_active", nil)
+    if type(active) ~= "table" then active = { daily = true, yearly = true } end
+    local goals = {}
+    if active.daily then
+        goals.daily = math.max(1, tonumber(read("micromodule_reading_goal_daily", BOOKSHELF_DEFAULTS.daily)) or BOOKSHELF_DEFAULTS.daily)
+    end
+    if active.yearly then
+        goals.yearly = math.max(1, tonumber(read("micromodule_reading_goal_yearly", BOOKSHELF_DEFAULTS.yearly)) or BOOKSHELF_DEFAULTS.yearly)
+    end
+    return goals
+end
+
 local function fileTitle(file)
     return file and (file:match("([^/]+)%.[^./]+$") or file:match("([^/]+)$")) or nil
 end
@@ -206,8 +239,9 @@ local function finishBook(state, finished, stats, now)
     if step.book_seconds then
         book.hero = { Format.heroTime(step.book_seconds) }
         local has_pace = (state.timed or 0) >= MIN_TIMED_PAGES
-        if has_pace and stats and stats.avg_day_seconds then
-            book.forecast = Format.forecast(step.book_seconds, stats.today_seconds, stats.avg_day_seconds, now)
+        local daily = stats and (stats.goal_minutes and stats.goal_minutes * 60 or stats.avg_day_seconds)
+        if has_pace and daily then
+            book.forecast = Format.forecast(step.book_seconds, stats.today_seconds, daily, now, stats.goal_minutes)
         end
     elseif state.page and state.total then
         book.hero = { Format.heroPages(state.page, state.total) }
@@ -278,10 +312,12 @@ local function readerStats(now)
     local c = Chain.compute(days, now)
     local year_start = os.time{ year = tonumber(os.date("%Y", now)), month = 1, day = 1, hour = 0 }
     local books = Data.booksFinishedSince(nil, year_start)
-    local goal = G_reader_settings:readSetting("streakchain_goal")
+    local goals = Data.goals()
     local week_value, week_sub = Format.weekTile(c.week_seconds, c.last_week_seconds)
-    local books_value, books_sub = Format.booksTile(books, goal, now)
+    local books_value, books_sub = Format.booksTile(books, goals.yearly, now)
     return {
+        goal_minutes = goals.daily,
+        daily = goals.daily and Format.dailyGoal(c.today_seconds, goals.daily) or nil,
         streak = c.streak,
         best = c.best,
         read_today = c.read_today,
