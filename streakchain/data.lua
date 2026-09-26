@@ -1,0 +1,261 @@
+--[[
+Gathers everything the sleep screen shows into one plain table (the model),
+so streakchain/screen.lua only ever draws and never asks KOReader anything.
+
+  model.header = { date = "Friday · 26 September", battery = "Battery 8%" | nil }
+  model.book   = nil (nothing to show) | {
+      title, author, pct (0..1), finished, ticks = { 0..1, ... },
+      meta = { line variants, most detailed first },
+      cover = BlitBuffer | nil,   -- owned by the model, freed by the screen
+  }
+  model.stats  = nil (Reading statistics off) | {
+      cells = { 28 square codes }, streak, note, line,
+  }
+]]
+
+local DataStorage = require("datastorage")
+local Device = require("device")
+local DocSettings = require("docsettings")
+local lfs = require("libs/libkoreader-lfs")
+local logger = require("logger")
+
+local Chain = require("streakchain/chain")
+local Format = require("streakchain/format")
+
+local Data = {}
+
+local DEFAULT_MAX_SEC = 120 -- KOReader's statistics default
+
+local function dbPath()
+    return DataStorage:getSettingsDir() .. "/statistics.sqlite3"
+end
+
+local function statsSettings()
+    return G_reader_settings:readSetting("statistics") or {}
+end
+
+-- KOReader's own fallback pace for a book with no history yet: half the
+-- per-page cap, 60 s with default settings.
+local function defaultPace()
+    return 0.5 * (statsSettings().max_sec or DEFAULT_MAX_SEC)
+end
+
+function Data.statsEnabled(ui)
+    local disabled = G_reader_settings:readSetting("plugins_disabled")
+    if disabled and disabled.statistics then return false end
+    local settings = (ui and ui.statistics and ui.statistics.settings) or statsSettings()
+    if settings.is_enabled == false then return false end
+    return lfs.attributes(dbPath(), "mode") == "file"
+end
+
+local function withDB(path, fn)
+    local ok_req, SQ3 = pcall(require, "lua-ljsqlite3/init")
+    if not ok_req then return nil end
+    local ok_open, conn = pcall(SQ3.open, path or dbPath())
+    if not ok_open or not conn then return nil end
+    local ok, res = pcall(fn, conn)
+    pcall(conn.close, conn)
+    if not ok then
+        logger.warn("streakchain: statistics query failed:", res)
+        return nil
+    end
+    return res
+end
+
+-- "YYYY-MM-DD" (local time) -> seconds read that day.
+function Data.readDays(path)
+    return withDB(path, function(conn)
+        local days = {}
+        local res = conn:exec([[
+            SELECT date(start_time, 'unixepoch', 'localtime'), sum(duration)
+            FROM page_stat_data GROUP BY 1;]])
+        if res and res[1] then
+            for i = 1, #res[1] do
+                days[tostring(res[1][i])] = tonumber(res[2][i]) or 0
+            end
+        end
+        return days
+    end)
+end
+
+-- A book counts as finished the first time a page at 99% or later was read.
+function Data.booksFinishedSince(path, since)
+    return withDB(path, function(conn)
+        local n = conn:rowexec(string.format([[
+            SELECT count(*) FROM (
+                SELECT id_book, min(start_time) AS t FROM page_stat_data
+                WHERE total_pages > 0 AND page * 100 >= total_pages * 99
+                GROUP BY id_book
+            ) WHERE t >= %d;]], since))
+        return tonumber(n) or 0
+    end) or 0
+end
+
+-- Pages and average seconds per page for one book, by its partial md5.
+function Data.bookPace(path, md5)
+    return withDB(path, function(conn)
+        local stmt = conn:prepare("SELECT id, pages FROM book WHERE md5 = ?;")
+        local row = stmt:reset():bind(md5):step()
+        stmt:close()
+        if not row then return nil end
+        local id, pages = tonumber(row[1]), tonumber(row[2])
+        local n, t = conn:rowexec(string.format(
+            "SELECT count(DISTINCT page), sum(duration) FROM page_stat WHERE id_book = %d;", id))
+        n, t = tonumber(n) or 0, tonumber(t) or 0
+        return { pages = pages, avg = n > 0 and t / n or nil }
+    end)
+end
+
+local function fileTitle(file)
+    return file and (file:match("([^/]+)%.[^./]+$") or file:match("([^/]+)$")) or nil
+end
+
+local function coverFor(ui, document, file)
+    if not (ui and ui.bookinfo) then return nil end
+    local ok, bb = pcall(ui.bookinfo.getCoverImage, ui.bookinfo, document, file)
+    if ok and bb then return bb end
+    return nil
+end
+
+-- The open book, read live from the reader.
+local function readerBook(ui, stats_on)
+    local doc = ui.document
+    local props = ui.doc_props or {}
+    local page = ui:getCurrentPage() or 1
+    local total = doc:getPageCount() or 1
+    if total < 1 then total = 1 end
+    local pct = page / total
+    local summary = ui.doc_settings and ui.doc_settings:readSetting("summary")
+    local finished = (summary and summary.status == "complete") or false
+
+    local book = {
+        title = Format.cleanTitle(props.display_title or props.title) or fileTitle(doc.file) or "",
+        author = Format.authorLine(props.authors),
+        pct = pct,
+        finished = finished,
+        ticks = {},
+    }
+
+    local step = { book_pages = total - page + 1 }
+    local toc = ui.toc
+    if toc then
+        pcall(toc.fillToc, toc)
+        local has = toc.toc and #toc.toc > 0 or false
+        step.has_chapters = has
+        if has then
+            local next_ch = toc:getNextChapter(page)
+            step.in_last_chapter = next_ch == nil
+            step.chapter_title = toc:getTocTitleByPage(page)
+            if next_ch then step.chapter_pages = next_ch - page end
+            local ok, ticks = pcall(toc.getTocTicks, toc, 1)
+            if ok and type(ticks) == "table" then
+                for _, p in ipairs(ticks) do
+                    if p > 1 and p <= total then
+                        table.insert(book.ticks, (p - 1) / total)
+                    end
+                end
+            end
+        end
+    end
+
+    local st = ui.statistics
+    if stats_on and st then
+        local avg = st.avg_time
+        if not (avg and avg == avg and avg > 0) then avg = defaultPace() end
+        step.book_seconds = step.book_pages * avg
+        if step.chapter_pages then step.chapter_seconds = step.chapter_pages * avg end
+    end
+
+    book.meta = Format.metaVariants(book.author, pct, step, finished)
+    book.cover = coverFor(ui, doc, doc.file)
+    return book
+end
+
+-- The last book, read from its sidecar (sleeping from the file browser).
+-- No chapter data here, so the next step is always "left in the book".
+local function lastBook(ui, stats_on)
+    local file = G_reader_settings:readSetting("lastfile")
+    if not file or lfs.attributes(file, "mode") ~= "file" then return nil end
+    local ok, ds = pcall(DocSettings.open, DocSettings, file)
+    if not ok or not ds then return nil end
+    local props = ds:readSetting("doc_props") or {}
+    local pct = ds:readSetting("percent_finished") or 0
+    local summary = ds:readSetting("summary")
+    local finished = (summary and summary.status == "complete") or pct >= 1
+
+    local book = {
+        title = Format.cleanTitle(props.display_title or props.title) or fileTitle(file) or "",
+        author = Format.authorLine(props.authors),
+        pct = pct,
+        finished = finished,
+        ticks = {},
+    }
+
+    local step = { has_chapters = false }
+    local md5 = ds:readSetting("partial_md5_checksum")
+    if md5 and stats_on then
+        local pace = Data.bookPace(nil, md5)
+        if pace and pace.pages and pace.pages > 0 then
+            local pages_left = math.max(1, math.ceil((1 - pct) * pace.pages))
+            step.book_pages = pages_left
+            step.book_seconds = pages_left * (pace.avg or defaultPace())
+        end
+    end
+
+    book.meta = Format.metaVariants(book.author, pct, step, finished)
+    book.cover = coverFor(ui, nil, file)
+    return book
+end
+
+local function batteryWarning()
+    if not Device:hasBattery() then return nil end
+    local ok, power = pcall(Device.getPowerDevice, Device)
+    if not ok or not power then return nil end
+    local ok_cap, capacity = pcall(power.getCapacity, power)
+    local ok_chg, charging = pcall(power.isCharging, power)
+    return Format.batteryWarning(ok_cap and capacity or nil, ok_chg and charging or false)
+end
+
+function Data.build(ui, now)
+    now = now or os.time()
+    local model = { header = { date = Format.headerDate(now), battery = batteryWarning() } }
+    local stats_on = Data.statsEnabled(ui)
+
+    -- The statistics plugin buffers the current session in memory and only
+    -- writes it on suspend, which comes after the sleep screen is drawn.
+    -- Flush it now so today's pages are counted.
+    if stats_on and ui.document and ui.statistics and ui.statistics.insertDB then
+        pcall(ui.statistics.insertDB, ui.statistics)
+    end
+
+    local ok, book
+    if ui.document then
+        ok, book = pcall(readerBook, ui, stats_on)
+    else
+        ok, book = pcall(lastBook, ui, stats_on)
+    end
+    if ok then
+        model.book = book
+    else
+        logger.warn("streakchain: could not read the book:", book)
+    end
+
+    if stats_on then
+        local days = Data.readDays()
+        if days then
+            local c = Chain.compute(days, now)
+            local year_start = os.time{ year = tonumber(os.date("%Y", now)), month = 1, day = 1, hour = 0 }
+            local books = Data.booksFinishedSince(nil, year_start)
+            local goal = G_reader_settings:readSetting("streakchain_goal")
+            model.stats = {
+                cells = c.cells,
+                streak = c.streak,
+                note = Format.streakNote(c.streak, c.read_today, c.best),
+                line = Format.statsLine(c.best, c.streak, c.week_seconds, books, goal),
+            }
+        end
+    end
+    return model
+end
+
+return Data
