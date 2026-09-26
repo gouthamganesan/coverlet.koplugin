@@ -119,4 +119,24 @@ function C.compute(days, now)
     }
 end
 
+-- Chapter marks for the progress bar, as fractions of the book. Front and
+-- back matter (Praise, Title Page, Acknowledgements...) bunch up at the ends,
+-- so a mark closer than MIN_GAP to the one before it is dropped, as are marks
+-- in the first and last 1%.
+C.MIN_GAP = 0.015
+
+function C.thinTicks(ticks)
+    local sorted = {}
+    for _, t in ipairs(ticks or {}) do table.insert(sorted, t) end
+    table.sort(sorted)
+    local kept, last = {}, nil
+    for _, t in ipairs(sorted) do
+        if t > 0.01 and t < 0.99 and (not last or t - last >= C.MIN_GAP) then
+            table.insert(kept, t)
+            last = t
+        end
+    end
+    return kept
+end
+
 return C

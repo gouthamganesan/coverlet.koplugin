@@ -165,5 +165,17 @@ r = C.compute(build(seq("2026-12-30", "m m m")), ny)
 eq(r.streak, 3, "chain across new year")
 eq(C.weekdayIndex(ny), 4, "1 Jan 2027 is a Friday")
 
+-- ------------------------------------------------------ chapter marks ---
+local sharp = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389, 396, 401, 403, 410, 438, 439 }
+local fr = {}
+for _, p in ipairs(sharp) do table.insert(fr, (p - 1) / 440) end
+local kept = C.thinTicks(fr)
+eq(#kept, 20, "ticks thinned from 26")
+local closest = 1
+for i = 2, #kept do closest = math.min(closest, kept[i] - kept[i - 1]) end
+eq(closest >= C.MIN_GAP, true, "no two marks closer than the minimum gap")
+eq(kept[#kept] < 0.99, true, "no marks in the last 1%")
+eq(#C.thinTicks({}), 0, "no chapters, no marks")
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

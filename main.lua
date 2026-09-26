@@ -77,6 +77,15 @@ function StreakChain:init()
     self.ui.menu:registerToMainMenu(self)
 end
 
+-- Leaving the book for the file browser or Bookshelf: keep its chapter and
+-- time left, so a sleep screen shown from there still has them.
+function StreakChain:onCloseDocument()
+    if self.ui and self.ui.document then
+        local ok, err = pcall(Data.saveSnapshot, self.ui)
+        if not ok then logger.warn("streakchain: could not save the snapshot:", err) end
+    end
+end
+
 function StreakChain:toggleSleepScreen()
     if isActive() then
         local previous = G_reader_settings:readSetting("streakchain_previous_type")

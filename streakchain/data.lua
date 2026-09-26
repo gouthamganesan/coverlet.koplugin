@@ -117,26 +117,25 @@ local function coverFor(ui, document, file)
     return nil
 end
 
--- The open book, read live from the reader.
-local function readerBook(ui, stats_on)
+-- What the open book's reader knows: title, position, chapters, pace.
+-- Plain values only, so it can also be saved for the file browser.
+local function readerState(ui, stats_on)
     local doc = ui.document
     local props = ui.doc_props or {}
     local page = ui:getCurrentPage() or 1
     local total = doc:getPageCount() or 1
     if total < 1 then total = 1 end
-    local pct = page / total
-    local summary = ui.doc_settings and ui.doc_settings:readSetting("summary")
-    local finished = (summary and summary.status == "complete") or false
 
-    local book = {
+    local state = {
+        file = doc.file,
         title = Format.cleanTitle(props.display_title or props.title) or fileTitle(doc.file) or "",
         author = Format.authorLine(props.authors),
-        pct = pct,
-        finished = finished,
+        pct = page / total,
         ticks = {},
+        step = { book_pages = total - page + 1 },
     }
+    local step = state.step
 
-    local step = { book_pages = total - page + 1 }
     local toc = ui.toc
     if toc then
         pcall(toc.fillToc, toc)
@@ -149,11 +148,11 @@ local function readerBook(ui, stats_on)
             if next_ch then step.chapter_pages = next_ch - page end
             local ok, ticks = pcall(toc.getTocTicks, toc, 1)
             if ok and type(ticks) == "table" then
+                local fractions = {}
                 for _, p in ipairs(ticks) do
-                    if p > 1 and p <= total then
-                        table.insert(book.ticks, (p - 1) / total)
-                    end
+                    if p > 1 and p <= total then table.insert(fractions, (p - 1) / total) end
                 end
+                state.ticks = Chain.thinTicks(fractions)
             end
         end
     end
@@ -165,40 +164,70 @@ local function readerBook(ui, stats_on)
         step.book_seconds = step.book_pages * avg
         if step.chapter_pages then step.chapter_seconds = step.chapter_pages * avg end
     end
+    return state
+end
 
-    book.meta = Format.metaVariants(book.author, pct, step, finished)
-    book.cover = coverFor(ui, doc, doc.file)
-    return book
+-- Saved whenever the reader closes or sleeps, so the sleep screen shown from
+-- the file browser (or Bookshelf) still knows the chapter and time left.
+function Data.saveSnapshot(ui, state)
+    state = state or readerState(ui, Data.statsEnabled(ui))
+    G_reader_settings:saveSetting("streakchain_snapshot", state)
+    return state
+end
+
+-- The open book, read live from the reader.
+local function readerBook(ui, stats_on)
+    local state = readerState(ui, stats_on)
+    pcall(Data.saveSnapshot, ui, state)
+    local summary = ui.doc_settings and ui.doc_settings:readSetting("summary")
+    local finished = (summary and summary.status == "complete") or false
+    return {
+        title = state.title,
+        author = state.author,
+        pct = state.pct,
+        finished = finished,
+        ticks = state.ticks,
+        meta = Format.metaVariants(state.author, state.pct, state.step, finished),
+        cover = coverFor(ui, ui.document, ui.document.file),
+    }
 end
 
 -- The last book, read from its sidecar (sleeping from the file browser).
--- No chapter data here, so the next step is always "left in the book".
+-- Chapters and time left come from the snapshot the reader saved when it
+-- closed; without one, the next step falls back to "left in the book".
 local function lastBook(ui, stats_on)
     local file = G_reader_settings:readSetting("lastfile")
     if not file or lfs.attributes(file, "mode") ~= "file" then return nil end
     local ok, ds = pcall(DocSettings.open, DocSettings, file)
     if not ok or not ds then return nil end
     local props = ds:readSetting("doc_props") or {}
-    local pct = ds:readSetting("percent_finished") or 0
+    local pct = ds:readSetting("percent_finished")
     local summary = ds:readSetting("summary")
+
+    local snap = G_reader_settings:readSetting("streakchain_snapshot")
+    if type(snap) ~= "table" or snap.file ~= file then snap = nil end
+    pct = pct or (snap and snap.pct) or 0
     local finished = (summary and summary.status == "complete") or pct >= 1
 
     local book = {
-        title = Format.cleanTitle(props.display_title or props.title) or fileTitle(file) or "",
-        author = Format.authorLine(props.authors),
+        title = (snap and snap.title) or Format.cleanTitle(props.display_title or props.title) or fileTitle(file) or "",
+        author = (snap and snap.author) or Format.authorLine(props.authors),
         pct = pct,
         finished = finished,
-        ticks = {},
+        ticks = (snap and snap.ticks) or {},
     }
 
-    local step = { has_chapters = false }
-    local md5 = ds:readSetting("partial_md5_checksum")
-    if md5 and stats_on then
-        local pace = Data.bookPace(nil, md5)
-        if pace and pace.pages and pace.pages > 0 then
-            local pages_left = math.max(1, math.ceil((1 - pct) * pace.pages))
-            step.book_pages = pages_left
-            step.book_seconds = pages_left * (pace.avg or defaultPace())
+    local step = snap and snap.step
+    if not step then
+        step = { has_chapters = false }
+        local md5 = ds:readSetting("partial_md5_checksum")
+        if md5 and stats_on then
+            local pace = Data.bookPace(nil, md5)
+            if pace and pace.pages and pace.pages > 0 then
+                local pages_left = math.max(1, math.ceil((1 - pct) * pace.pages))
+                step.book_pages = pages_left
+                step.book_seconds = pages_left * (pace.avg or defaultPace())
+            end
         end
     end
 
