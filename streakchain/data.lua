@@ -327,6 +327,10 @@ function Data.build(ui, now)
     else
         logger.warn("streakchain: could not read the book:", book)
     end
+    logger.info("streakchain: sleep screen from", ui.document and "the reader" or "the file browser",
+        "| book:", model.book and model.book.title or "none",
+        "| progress:", model.book and model.book.progress or "-",
+        "| forecast:", model.book and model.book.forecast and model.book.forecast.line or "-")
     return model
 end
 

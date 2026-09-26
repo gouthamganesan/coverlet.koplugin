@@ -77,13 +77,34 @@ function StreakChain:init()
     self.ui.menu:registerToMainMenu(self)
 end
 
--- Leaving the book for the file browser or Bookshelf: keep its chapter and
--- time left, so a sleep screen shown from there still has them.
-function StreakChain:onCloseDocument()
-    if self.ui and self.ui.document then
-        local ok, err = pcall(Data.saveSnapshot, self.ui)
-        if not ok then logger.warn("streakchain: could not save the snapshot:", err) end
+-- The snapshot of the open book (chapter, time left, marks) that a sleep
+-- screen shown from the file browser or Bookshelf falls back on. Bookshelf
+-- keeps a book "parked" open behind the shelf and only really closes it
+-- later, so saving on close alone isn't enough: save when the book opens,
+-- as pages turn (at most every 30 s), and on close.
+function StreakChain:saveSnapshot(why)
+    if not (self.ui and self.ui.document) then return end
+    local ok, state = pcall(Data.saveSnapshot, self.ui)
+    if ok then
+        logger.dbg("streakchain: snapshot saved on", why, state.step and state.step.chapter_title)
+    else
+        logger.warn("streakchain: could not save the snapshot:", state)
     end
+end
+
+function StreakChain:onReaderReady()
+    UIManager:scheduleIn(2, function() self:saveSnapshot("open") end)
+end
+
+function StreakChain:onPageUpdate()
+    local now = os.time()
+    if self._snapshot_at and now - self._snapshot_at < 30 then return end
+    self._snapshot_at = now
+    self:saveSnapshot("page")
+end
+
+function StreakChain:onCloseDocument()
+    self:saveSnapshot("close")
 end
 
 function StreakChain:toggleSleepScreen()
