@@ -2,6 +2,6 @@ local _ = require("gettext")
 return {
     name = "streakchain",
     fullname = _("Streak chain"),
-    description = _([[A sleep screen with the book you're reading, the time left in the chapter, and a four-week reading chain.]]),
-    version = "0.1.0",
+    description = _([[A sleep screen with the book you're reading, today against your reading goals, and your day streak over a three-month calendar.]]),
+    version = "0.2.0",
 }

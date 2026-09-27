@@ -1,6 +1,6 @@
 --[[
-Streak chain: a sleep screen with the book you're reading, the time left in
-the chapter, and a four-week reading chain.
+Streak chain: a sleep screen with the book you're reading, today against
+your reading goals, and your day streak over a three-month calendar.
 
 Hooks into KOReader's own sleep screen rather than drawing beside it: once
 "Use as sleep screen" is on, screensaver_type is "streakchain", core's
