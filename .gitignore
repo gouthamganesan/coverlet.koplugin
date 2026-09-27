@@ -1,3 +1,5 @@
 .DS_Store
 tools/empty/
+tools/out/
 *.png
+!docs/*.png

@@ -1,91 +1,82 @@
 # Coverlet
 
-A KOReader sleep screen for making reading a daily habit. It shows the book
-you're reading and the time left in it, today against your daily goal, your
-other reading goals, and the day streak over a three-month calendar.
+A [KOReader](https://koreader.rocks) sleep screen that nudges you back to your book. When the e-reader sleeps, it shows what you're reading, how close you are to the end of the chapter, today against your reading goal, and your streak over the last three months.
 
-Any page counts as a reading day. The numbers come from KOReader's own
-Reading statistics and the goals from Bookshelf's Reading goal module, so
-nothing new is tracked.
+<p>
+  <img src="docs/screen.png" width="49%" alt="Coverlet sleep screen: Sharp Objects, 22 minutes left in Chapter Thirteen, 33 minutes to today's goal, a 5 day streak and a three-month reading calendar">
+  <img src="docs/goal-done.png" width="49%" alt="Coverlet on a day the reading goal is done: 52 minutes today, goal done">
+</p>
+
+Built for slow readers. Nothing on it compares your speed, a day off reads as a rest day, and any page counts as a reading day.
+
+## What's on it
+
+- **The book:** its cover at its own proportions, the time left in the chapter and in the book, and how long you've spent in it so far.
+- **A quote about reading,** a different one each time the screen sleeps. There are 93, each checked against its source ([sources](docs/quote-sources.md)).
+- **The chapter bar:** the current chapter magnified, the ones before it filled, the ones after outlined.
+- **Today:** minutes to your daily goal, yesterday's reading, pages today, and how many days in a row you've met the goal.
+- **Goals:** this week's hours, and books finished this month and this year. Books still in progress show in grey after the finished ones.
+- **The streak:** a flame that grows with the run and stays an outline until you read today, your best run, and the hours in the three months shown.
+- **A calendar** of the last three months, each day shaded by how long you read.
+
+It also has layouts for landscape, no book open, and Reading statistics turned off.
+
+<img src="docs/landscape.png" width="70%" alt="Coverlet in landscape">
 
 ## Install
 
-Copy this folder to `koreader/plugins/coverlet.koplugin` on the device and
-restart KOReader. Then:
+1. Copy this folder to `koreader/plugins/coverlet.koplugin` on your device and restart KOReader.
+2. Turn it on in **Tools → Coverlet → Use as sleep screen**. Turning it off restores the sleep screen you had before.
+3. **Tools → Coverlet → Preview** shows it right away; tap to close.
 
-- **Tools → Coverlet → Use as sleep screen** turns it on. Turning it off
-  restores whatever sleep screen you had before.
-- **Preview** shows it now; tap to close.
+What it needs:
 
-It was called Streak chain until 0.3.0. On first load it carries the old
-settings over (the sleep screen choice, the chapter snapshot, the quote
-rotation), so remove the old `streakchain.koplugin` folder from the device
-rather than keeping both.
+- **KOReader's Reading statistics** turned on. Every number comes from it, so Coverlet tracks nothing new.
+- **[Bookshelf](https://github.com/AndyHazz/bookshelf.koplugin)** for goals (optional). Coverlet reads the daily, weekly, monthly and yearly goals you set in Bookshelf's Reading goal, and counts finished books the same way, so the two always agree. Without Bookshelf the goal rows are left out.
+- **Fonts** (optional): [Vollkorn](https://fonts.google.com/specimen/Vollkorn) and [Atkinson Hyperlegible](https://fonts.google.com/specimen/Atkinson+Hyperlegible) in your device's font folder. Otherwise it uses KOReader's Noto fonts.
 
-Goals are set in Bookshelf (daily, weekly, monthly, yearly). A goal that's
-switched off or unset there drops its row here.
+On an ad-supported Kindle, KOReader only draws sleep screens once Amazon's ad screensaver is unloaded (`lipc-set-prop com.lab126.blanket unload ad_screensaver`), and that resets on every reboot.
 
-It uses Vollkorn and Atkinson Hyperlegible when they're installed in the
-device's font folder, and KOReader's Noto fonts otherwise.
+## Design rules
 
-On an ad-supported Kindle, KOReader only draws sleep screens once Amazon's ad
-screensaver is unloaded (`lipc-set-prop com.lab126.blanket unload
-ad_screensaver`). That resets on every reboot.
+- Covers are drawn at their own pixels and only ever shrunk to fit. Never stretched or enlarged.
+- Everything is drawn in the 16 greys an e-ink screen can show.
+- No wording depends on the time of day, and every label reads right at 1 and at many.
+- A book counts as finished only when it's marked finished. In progress means at least a tenth read.
 
-## What it shows
+## How it works
 
-Design 7b, "Two-column ledger", on paper: the book on a light gray page, the
-stats on a white sheet.
+KOReader's `Screensaver` passes an unknown screen type through its setup untouched. Coverlet registers the type `coverlet` and wraps `Screensaver:show()`: for that type it builds its own widget and hands it to core's `ScreenSaverWidget`, so KOReader closes it on wake like any of its own screens. If drawing ever fails, it falls back to a plain screen instead of leaving the device on a broken one.
 
-| Part | Rule |
+| File | Does |
 |---|---|
-| Header | Weekday and date. Warns about the battery at 15% or less. |
-| Book | The cover at its own pixels, only ever shrunk (to 420 px tall), never enlarged or reshaped; a typeset cover when there's none. Title, author, then the next step: "22 min left in Chapter Thirteen", the chapter's title when it has 20 characters or fewer, otherwise "this chapter"; "left in the book" in the last chapter or a book without chapters; pages without Reading statistics. |
-| Hero | Time to the end, "2 h 40 to the end" or "38 min to the end"; the page without Reading statistics. Under it, time in this book so far: "6 h 40 in, since 12 Sep". |
-| Quote | A quote about reading in the gap above the hero, the next one from a shuffled order that doesn't repeat until all have shown. At most two lines and only what the gap holds; one too long is skipped for the next that fits, and if none fits the gap stays empty. The list is `coverlet/quotes.lua`. |
-| Chapter bar | The current chapter magnified to 40% of the width, filled as far as it's read, with its title and the time left in it; the chapters before it solid, the ones after outlined, each as wide as its share of the rest. Front and back matter of a page or two fold into their neighbours. A book without chapters is one box: "Page 87 of 230", "143 pages to go". |
-| Today | Minutes to the daily goal with a bar ("33 min to today's goal"), then Yesterday ("52 min", or "Rest day"), Pages today, and Goal day streak: days in a row the whole goal was met, today counting once it is. After the goal: "52 min today · goal done". |
-| Goals | This week in hours ("3 h 07 of 10 h"), this month's books and this year's books (a cell per book), then the hours read this year. Weeks start on Monday. |
-| Streak | The day streak with a flame: small at 1–2 days, larger at 3–6, largest from 7, with a white core from 30; an outline until a page is read today, dashed with no run. "Best run: 12 days" while the best run is ahead of the current one. |
-| Calendar | This month and the two before it, Monday-first. Days shaded by minutes read (none, under 20, 20–39, 40+), today ringed, days to come dashed, the current run joined up. |
+| `main.lua` | The menu and the sleep screen hook. |
+| `coverlet/data.lua` | Reads the open book (or the last one), the statistics database, the reading history and Bookshelf's goals into a plain model. |
+| `coverlet/screen.lua` | Draws the model. The layout is in 1264×1680 design units, scaled to the real screen. |
+| `coverlet/format.lua`, `chain.lua`, `quote.lua` | All the wording, the day and streak maths, the chapter bar's layout and the quote rotation, as pure Lua. |
+| `coverlet/quotes.lua` | The quotes. |
 
-Nothing refers to the time of day, and the wording reads right at 1 and at
-many. Other layouts: no book open, Reading statistics off (a hint in place of
-the stats), landscape (the book and the streak on the left, Today and Goals on
-the right), and a "Finished" band on finished books.
-
-## Code
-
-- `main.lua`: menu, and the hook into KOReader's `Screensaver:show()`. Core
-  passes the `coverlet` screen type through `setup()` untouched; the hook
-  builds the widget and hands it to core's `ScreenSaverWidget`, so core closes
-  it on wake like its own screens.
-- `coverlet/data.lua`: reads the open book (or the last one, from the file
-  browser), the statistics database and Bookshelf's goals into a plain model.
-- `coverlet/screen.lua`: draws the model. Layout is in the design's units
-  (1264×1680) and scaled to the real screen. The flame is drawn from the SVGs
-  in `coverlet/flame/`.
-- `coverlet/format.lua`, `coverlet/chain.lua`, `coverlet/quote.lua`:
-  every piece of wording, the day maths and the chapter bar's layout, and the
-  quote's rotation and fit, as pure Lua.
+When the screen sleeps from the file browser, the book isn't open, so Coverlet keeps a snapshot of the chapter and marks while you read and uses that.
 
 ## Tests
 
 ```sh
-tools/test.sh ~/.cache/streakchain-kotest/ko ~/.cache/streakchain-kotest/covers
+tools/test.sh <koreader-dir> [covers-dir] [out-dir]
 ```
 
-This needs Docker and an extracted `koreader-linux-arm64` release under
-`$HOME`. It runs two layers in a Debian container:
+`<koreader-dir>` is an extracted `koreader-linux` release (arm64 or x86_64). The script needs Docker, and runs two layers in a Debian container:
 
-1. `tests/run.lua`: unit tests for the wording, the day maths, the chapter bar
-   and the quote rules, on KOReader's LuaJIT.
-2. `tools/render.lua`: the real KOReader engine, headless. It renders every
-   state in `tools/fixtures.lua` to PNG and fails if any block overlaps
-   another, leaves the screen, or runs into its neighbour; checks the
-   statistics SQL against a synthetic database; and suspends through core's
-   `Screensaver` to confirm the hook end to end.
+1. `tests/run.lua`: unit tests for the wording, the day maths, the chapter bar and the quote rules, on KOReader's LuaJIT.
+2. `tools/render.lua`: the real KOReader engine, headless. It renders every state in `tools/fixtures.lua` to PNG and fails if any block overlaps another, leaves the screen or runs into its neighbour. It also checks the statistics SQL against a synthetic database, the book counts against synthetic sidecars, and suspends through core's `Screensaver` to test the hook end to end.
 
-`tools/repro_book.lua` opens a real book in a headless reader session and
-checks the file browser's screen matches the reader's (see its header for
-how to run it).
+`covers-dir` can hold sample covers named after the fixtures (`metamorphosis.png`, `sharp.png`); without it, the fixtures use the typeset cover. With Vollkorn and Atkinson Hyperlegible copied into the build's `fonts` folder, the renders match the device.
+
+## Credits
+
+- [KOReader](https://github.com/koreader/koreader), whose sleep screen and statistics this builds on.
+- [Bookshelf](https://github.com/AndyHazz/bookshelf.koplugin) by AndyHazz, for the reading goals.
+- Vollkorn by Friedrich Althausen and Atkinson Hyperlegible by the Braille Institute, both under the SIL Open Font License.
+
+## License
+
+[MIT](LICENSE)

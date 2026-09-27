@@ -102,8 +102,9 @@ for _, s in ipairs(states) do
         check(dw <= b.cover_w and dh <= b.cover_h, name .. ": cover never enlarged", dw .. "x" .. dh)
         check(math.abs(dw / dh - b.cover_w / b.cover_h) < 0.01, name .. ": cover keeps its proportions", dw .. "x" .. dh)
         if name == "18-many-chapters" then
-            -- 7b draws covers 420 px tall: the 500x667 cover shrinks to fit, evenly.
-            check(dh == 420 and dw == math.floor(500 * 420 / 667), name .. ": Sharp Objects cover shrunk to 7b's 420 px",
+            -- 7b draws covers 420 px tall: a taller sample cover shrinks to fit, evenly.
+            local want_h = math.min(420, b.cover_h)
+            check(dh == want_h and dw == math.floor(b.cover_w * want_h / b.cover_h), name .. ": cover shrunk to 7b's 420 px",
                 dw .. "x" .. dh)
         end
     end

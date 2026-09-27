@@ -10,7 +10,7 @@ set -e
 PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"
 KO="${1:?usage: tools/test.sh <koreader-dir> [covers-dir] [out-dir]}"
 COVERS="${2:-$PLUGIN/tools/empty}"
-OUT="${3:-$HOME/.cache/streakchain-kotest/out}"
+OUT="${3:-$PLUGIN/tools/out}"
 mkdir -p "$OUT" "$PLUGIN/tools/empty"
 
 echo "== unit tests"
