@@ -1,5 +1,5 @@
 --[[
-Draws the model from streakchain/data.lua as design 7b ("Two-column ledger")
+Draws the model from coverlet/data.lua as design 7b ("Two-column ledger")
 on paper: the book on a light gray page (cover, title, the next step, a daily
 quote when there's room, time to the end and time in the book so far) over
 its chapter bar; then the stats on a white sheet: Today and Goals side by
@@ -22,9 +22,9 @@ local TextWidget = require("ui/widget/textwidget")
 local Widget = require("ui/widget/widget")
 local logger = require("logger")
 
-local Chain = require("streakchain/chain")
-local Format = require("streakchain/format")
-local Quote = require("streakchain/quote")
+local Chain = require("coverlet/chain")
+local Format = require("coverlet/format")
+local Quote = require("coverlet/quote")
 
 local Screen = Device.screen
 
@@ -230,7 +230,7 @@ function StreakScreen:paintTo(bb, x, y)
     local ok, err = pcall(self.paintScreen, self, bb, x, y)
     log = nil
     if not ok then
-        logger.warn("streakchain: could not draw the sleep screen:", err)
+        logger.warn("coverlet: could not draw the sleep screen:", err)
         rect(bb, x, y, self.dimen.w, self.dimen.h, PAPER)
         local t = text("Sleeping", face("title", Screen:scaleBySize(40)))
         local s = t:getSize()
@@ -429,7 +429,7 @@ function StreakScreen:chooseQuote(gap, w, px)
         quotes.state = state
         if quotes.save then
             local ok, err = pcall(quotes.save, state)
-            if not ok then logger.warn("streakchain: could not save the quote rotation:", err) end
+            if not ok then logger.warn("coverlet: could not save the quote rotation:", err) end
         end
     end
     return self.quote_choice or nil

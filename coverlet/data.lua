@@ -1,6 +1,6 @@
 --[[
 Gathers everything the sleep screen shows into one plain table (the model),
-so streakchain/screen.lua only ever draws and never asks KOReader anything.
+so coverlet/screen.lua only ever draws and never asks KOReader anything.
 
   model.header = { date, battery = "Battery 8%" | nil }
   model.book   = nil (no book) | {
@@ -29,9 +29,9 @@ local DocSettings = require("docsettings")
 local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 
-local Chain = require("streakchain/chain")
-local Format = require("streakchain/format")
-local QUOTES = require("streakchain/quotes")
+local Chain = require("coverlet/chain")
+local Format = require("coverlet/format")
+local QUOTES = require("coverlet/quotes")
 
 local Data = {}
 
@@ -67,7 +67,7 @@ local function withDB(path, fn)
     local ok, res = pcall(fn, conn)
     pcall(conn.close, conn)
     if not ok then
-        logger.warn("streakchain: statistics query failed:", res)
+        logger.warn("coverlet: statistics query failed:", res)
         return nil
     end
     return res
@@ -223,7 +223,7 @@ The daily quote: the list and where the rotation stands. The screen picks
 the next one that fits the gap beside the cover (the gap is only known once
 it's laid out) and saves the rotation through save().
 ]]
-local QUOTE_KEY = "streakchain_quote"
+local QUOTE_KEY = "coverlet_quote"
 
 function Data.quotes()
     math.randomseed(os.time())
@@ -301,7 +301,7 @@ end
 -- the file browser (or Bookshelf) still knows the chapter and time left.
 function Data.saveSnapshot(ui, state)
     state = state or readerState(ui, Data.statsEnabled(ui))
-    G_reader_settings:saveSetting("streakchain_snapshot", state)
+    G_reader_settings:saveSetting("coverlet_snapshot", state)
     return state
 end
 
@@ -355,7 +355,7 @@ local function lastBook(ui, stats_on, now)
     local summary = ds:readSetting("summary")
     local md5 = ds:readSetting("partial_md5_checksum")
 
-    local snap = G_reader_settings:readSetting("streakchain_snapshot")
+    local snap = G_reader_settings:readSetting("coverlet_snapshot")
     if type(snap) ~= "table" or snap.file ~= file then snap = nil end
     local pct = ds:readSetting("percent_finished") or (snap and snap.pct) or 0
     local finished = (summary and summary.status == "complete") or pct >= 1
@@ -429,7 +429,7 @@ function Data.build(ui, now)
         if ok then
             model.stats = stats
         else
-            logger.warn("streakchain: could not read the statistics:", stats)
+            logger.warn("coverlet: could not read the statistics:", stats)
         end
     end
 
@@ -442,9 +442,9 @@ function Data.build(ui, now)
     if ok then
         model.book = book
     else
-        logger.warn("streakchain: could not read the book:", book)
+        logger.warn("coverlet: could not read the book:", book)
     end
-    logger.info("streakchain: sleep screen from", ui.document and "the reader" or "the file browser",
+    logger.info("coverlet: sleep screen from", ui.document and "the reader" or "the file browser",
         "| book:", model.book and model.book.title or "none",
         "| next:", model.book and model.book.step or "-",
         "| so far:", model.book and model.book.so_far or "-",

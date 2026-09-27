@@ -6,9 +6,9 @@ cover(name): returns a fresh cover BlitBuffer (or nil) on every call, because
 the screen owns and frees the cover it is given.
 ]]
 
-local C = require("streakchain/chain")
-local Data = require("streakchain/data")
-local F = require("streakchain/format")
+local C = require("coverlet/chain")
+local Data = require("coverlet/data")
+local F = require("coverlet/format")
 
 local NOW = os.time{ year = 2026, month = 9, day = 25, hour = 21 } -- a Friday
 

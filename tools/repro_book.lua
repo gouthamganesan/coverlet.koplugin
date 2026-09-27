@@ -70,14 +70,14 @@ if seeded then
 end
 print("statistics book id", seeded)
 
-local Data = require("streakchain/data")
+local Data = require("coverlet/data")
 local model = Data.build(reader)
 print("model.book.step", model.book and model.book.step)
 print("model.book.hero", model.book and model.book.hero and table.concat(model.book.hero, " "))
 print("model.book.so_far", model.book and model.book.so_far)
 print("model.book.ticks", model.book and #model.book.ticks)
 
-local StreakScreen = require("streakchain/screen")
+local StreakScreen = require("coverlet/screen")
 local W, H = Screen:getWidth(), Screen:getHeight()
 local function render(m, name)
     local bb = Blitbuffer.new(W, H, Blitbuffer.TYPE_BB8)

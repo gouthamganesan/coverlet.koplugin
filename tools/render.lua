@@ -10,7 +10,7 @@ Run from KOReader's install directory (the one holding reader.lua):
 tools/test.sh does this inside a Debian container.
 ]]
 
-local out_dir = arg[1] or "/tmp/streakchain-out"
+local out_dir = arg[1] or "/tmp/coverlet-out"
 local covers_dir = arg[2]
 local plugin_dir = os.getenv("PLUGIN_DIR") or "/plugin"
 
@@ -49,7 +49,7 @@ local function png(widget, name, w, h)
 end
 
 -- ------------------------------------------------------ 1. every state ---
-local StreakScreen = require("streakchain/screen")
+local StreakScreen = require("coverlet/screen")
 local logger = require("logger")
 local warned = {}
 local orig_warn = logger.warn
@@ -162,7 +162,7 @@ end
 -- Every quote in the shipped list sets whole, in two lines at most, in 7b's
 -- text column beside a 2:3 cover.
 local column = 1264 - 2 * 56 - 315 - 14 - 48
-for i, q in ipairs(require("streakchain/quotes")) do
+for i, q in ipairs(require("coverlet/quotes")) do
     local ok_q = type(q.text) == "string" and q.text ~= "" and type(q.author) == "string" and q.author ~= ""
     local h, lines = StreakScreen:quote(nil, 0, 0, column, function(v) return v end, q)
     check(ok_q and h ~= nil, "quotes.lua #" .. i .. " fits two lines at " .. column .. " px", lines or "too long")
@@ -170,8 +170,8 @@ end
 
 -- --------------------------------------------- 2. statistics SQL, synthetic ---
 local SQ3 = require("lua-ljsqlite3/init")
-local Data = require("streakchain/data")
-local C = require("streakchain/chain")
+local Data = require("coverlet/data")
+local C = require("coverlet/chain")
 
 local db_path = out_dir .. "/test-statistics.sqlite3"
 os.remove(db_path)
@@ -244,8 +244,8 @@ check(Data.pagesSince(db_path, now + 86400) == 0, "sql no pages tomorrow")
 local spent = Data.bookTime(db_path, "aaa")
 check(spent and spent.seconds == 30 * 60 + 50, "sql time in one book", spent and spent.seconds)
 check(spent and spent.first == at(6, 23) + 30 * 60, "sql the book's first page", spent and spent.first)
-check(spent and require("streakchain/format").bookSoFar(spent.seconds, spent.first, now) == "30 min in, since 19 Sep",
-    "sql time in the book reads right", spent and require("streakchain/format").bookSoFar(spent.seconds, spent.first, now))
+check(spent and require("coverlet/format").bookSoFar(spent.seconds, spent.first, now) == "30 min in, since 19 Sep",
+    "sql time in the book reads right", spent and require("coverlet/format").bookSoFar(spent.seconds, spent.first, now))
 check(Data.bookTime(db_path, "zzz") == nil, "sql unknown book has no time")
 local pace = Data.bookPace(db_path, "aaa")
 -- 30 pages at 60 s plus the late-night page at 50 s
@@ -300,20 +300,30 @@ os.remove(real_db)
 local src, dst = io.open(db_path, "rb"), io.open(real_db, "wb")
 dst:write(src:read("*a")); src:close(); dst:close()
 
+-- Settings saved under the old name carry over when the plugin loads.
+G_reader_settings:saveSetting("screensaver_type", "streakchain")
+G_reader_settings:saveSetting("streakchain_previous_type", "readinginsights")
+G_reader_settings:saveSetting("streakchain_quote", { order = { 2, 1 }, index = 1 })
+G_reader_settings:saveSetting("streakchain_goal", 10)
 local plugin_module = dofile(plugin_dir .. "/main.lua")
 local registered = false
 local fake_menu = { registerToMainMenu = function() registered = true end }
 local fm = { menu = fake_menu, bookinfo = nil }
 local plugin = plugin_module:new{ ui = fm }
 check(registered, "plugin registers its menu")
+check(G_reader_settings:readSetting("screensaver_type") == "coverlet", "the old sleep screen type becomes coverlet")
+check(G_reader_settings:readSetting("coverlet_previous_type") == "readinginsights"
+    and G_reader_settings:readSetting("streakchain_previous_type") == nil, "the previous screen type carries over")
+check(type(G_reader_settings:readSetting("coverlet_quote")) == "table", "the quote rotation carries over")
+check(G_reader_settings:readSetting("streakchain_goal") == nil, "the unused goal setting is cleared")
 
 local menu_items = {}
 plugin:addToMainMenu(menu_items)
-check(menu_items.streakchain and #menu_items.streakchain.sub_item_table == 2, "menu has two entries, no goal setting")
+check(menu_items.coverlet and #menu_items.coverlet.sub_item_table == 2, "menu has two entries, no goal setting")
 
 G_reader_settings:saveSetting("screensaver_type", "random_image")
 plugin:toggleSleepScreen()
-check(G_reader_settings:readSetting("screensaver_type") == "streakchain", "toggle turns it on")
+check(G_reader_settings:readSetting("screensaver_type") == "coverlet", "toggle turns it on")
 plugin:toggleSleepScreen()
 check(G_reader_settings:readSetting("screensaver_type") == "random_image", "toggle restores the previous screen")
 plugin:toggleSleepScreen()
@@ -323,7 +333,7 @@ local FileManager = require("apps/filemanager/filemanager")
 FileManager.instance = fm
 G_reader_settings:delSetting("lastfile")
 Screensaver:setup()
-check(Screensaver.screensaver_type == "streakchain", "core setup keeps our screen type")
+check(Screensaver.screensaver_type == "coverlet", "core setup keeps our screen type")
 local ok, err = pcall(Screensaver.show, Screensaver)
 check(ok, "core show runs our hook", err)
 local ssw = Screensaver.screensaver_widget

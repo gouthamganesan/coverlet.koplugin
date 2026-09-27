@@ -1,9 +1,9 @@
 --[[
-Streak chain: a sleep screen with the book you're reading, today against
+Coverlet: a sleep screen with the book you're reading, today against
 your reading goals, and your day streak over a three-month calendar.
 
 Hooks into KOReader's own sleep screen rather than drawing beside it: once
-"Use as sleep screen" is on, screensaver_type is "streakchain", core's
+"Use as sleep screen" is on, screensaver_type is "coverlet", core's
 Screensaver:setup() passes that value through untouched, and the patched
 Screensaver:show() below builds our widget and hands it to core's
 ScreenSaverWidget. Core then closes it on wake exactly as it closes its own.
@@ -18,10 +18,31 @@ local _ = require("gettext")
 
 -- KOReader only puts this folder on the module path while main.lua loads,
 -- so every module is required here, up front.
-local Data = require("streakchain/data")
-local StreakScreen = require("streakchain/screen")
+local Data = require("coverlet/data")
+local StreakScreen = require("coverlet/screen")
 
-local TYPE = "streakchain"
+local TYPE = "coverlet"
+
+-- The plugin was called Streak chain until 0.3.0. Carry its settings over
+-- once, so renaming it doesn't switch the sleep screen off or lose the
+-- chapter snapshot and the quote rotation.
+local function migrateFromStreakChain()
+    if G_reader_settings:readSetting("screensaver_type") == "streakchain" then
+        G_reader_settings:saveSetting("screensaver_type", TYPE)
+    end
+    for _, key in ipairs({ "previous_type", "snapshot", "quote" }) do
+        local old = G_reader_settings:readSetting("streakchain_" .. key)
+        if old ~= nil then
+            if G_reader_settings:readSetting("coverlet_" .. key) == nil then
+                if old == "streakchain" then old = TYPE end
+                G_reader_settings:saveSetting("coverlet_" .. key, old)
+            end
+            G_reader_settings:delSetting("streakchain_" .. key)
+        end
+    end
+    -- Unused since the goals moved to Bookshelf.
+    G_reader_settings:delSetting("streakchain_goal")
+end
 
 local function isActive()
     return G_reader_settings:readSetting("screensaver_type") == TYPE
@@ -29,8 +50,8 @@ end
 
 local function patchScreensaver()
     local Screensaver = require("ui/screensaver")
-    if Screensaver._streakchain_patched then return end
-    Screensaver._streakchain_patched = true
+    if Screensaver._coverlet_patched then return end
+    Screensaver._coverlet_patched = true
 
     local orig_show = Screensaver.show
     Screensaver.show = function(self, ...)
@@ -41,7 +62,7 @@ local function patchScreensaver()
             return StreakScreen:new{ model = Data.build(self.ui) }
         end)
         if not ok or not widget then
-            logger.warn("streakchain: falling back to leaving the screen as is:", widget)
+            logger.warn("coverlet: falling back to leaving the screen as is:", widget)
             self.screensaver_type = "disable"
             return orig_show(self, ...)
         end
@@ -67,12 +88,13 @@ local function patchScreensaver()
     end
 end
 
-local StreakChain = WidgetContainer:extend{
-    name = "streakchain",
+local Coverlet = WidgetContainer:extend{
+    name = "coverlet",
     is_doc_only = false,
 }
 
-function StreakChain:init()
+function Coverlet:init()
+    migrateFromStreakChain()
     patchScreensaver()
     self.ui.menu:registerToMainMenu(self)
 end
@@ -82,52 +104,52 @@ end
 -- keeps a book "parked" open behind the shelf and only really closes it
 -- later, so saving on close alone isn't enough: save when the book opens,
 -- as pages turn (at most every 30 s), and on close.
-function StreakChain:saveSnapshot(why)
+function Coverlet:saveSnapshot(why)
     if not (self.ui and self.ui.document) then return end
     local ok, state = pcall(Data.saveSnapshot, self.ui)
     if ok then
-        logger.dbg("streakchain: snapshot saved on", why, state.step and state.step.chapter_title)
+        logger.dbg("coverlet: snapshot saved on", why, state.step and state.step.chapter_title)
     else
-        logger.warn("streakchain: could not save the snapshot:", state)
+        logger.warn("coverlet: could not save the snapshot:", state)
     end
 end
 
-function StreakChain:onReaderReady()
+function Coverlet:onReaderReady()
     UIManager:scheduleIn(2, function() self:saveSnapshot("open") end)
 end
 
-function StreakChain:onPageUpdate()
+function Coverlet:onPageUpdate()
     local now = os.time()
     if self._snapshot_at and now - self._snapshot_at < 30 then return end
     self._snapshot_at = now
     self:saveSnapshot("page")
 end
 
-function StreakChain:onCloseDocument()
+function Coverlet:onCloseDocument()
     self:saveSnapshot("close")
 end
 
-function StreakChain:toggleSleepScreen()
+function Coverlet:toggleSleepScreen()
     if isActive() then
-        local previous = G_reader_settings:readSetting("streakchain_previous_type")
+        local previous = G_reader_settings:readSetting("coverlet_previous_type")
         if not previous or previous == TYPE then previous = "cover" end
         G_reader_settings:saveSetting("screensaver_type", previous)
     else
-        G_reader_settings:saveSetting("streakchain_previous_type", G_reader_settings:readSetting("screensaver_type"))
+        G_reader_settings:saveSetting("coverlet_previous_type", G_reader_settings:readSetting("screensaver_type"))
         G_reader_settings:saveSetting("screensaver_type", TYPE)
     end
 end
 
 -- Shows the sleep screen now; a tap closes it.
-function StreakChain:preview()
+function Coverlet:preview()
     local ScreenSaverWidget = require("ui/widget/screensaverwidget")
     local ok, widget = pcall(function()
         return StreakScreen:new{ model = Data.build(self.ui) }
     end)
     if not ok then
-        logger.warn("streakchain: preview failed:", widget)
+        logger.warn("coverlet: preview failed:", widget)
         local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{ text = _("Streak chain could not build the screen.") })
+        UIManager:show(InfoMessage:new{ text = _("Coverlet could not build the screen.") })
         return
     end
     local preview = ScreenSaverWidget:new{
@@ -139,9 +161,9 @@ function StreakChain:preview()
     UIManager:show(preview, "full")
 end
 
-function StreakChain:addToMainMenu(menu_items)
-    menu_items.streakchain = {
-        text = _("Streak chain"),
+function Coverlet:addToMainMenu(menu_items)
+    menu_items.coverlet = {
+        text = _("Coverlet"),
         sorting_hint = "tools",
         sub_item_table = {
             {
@@ -158,4 +180,4 @@ function StreakChain:addToMainMenu(menu_items)
     }
 end
 
-return StreakChain
+return Coverlet

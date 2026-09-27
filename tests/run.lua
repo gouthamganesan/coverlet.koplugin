@@ -7,9 +7,9 @@ needed: run from the repo root with any Lua 5.1 or LuaJIT,
 
 package.path = "./?.lua;" .. package.path
 
-local F = require("streakchain/format")
-local C = require("streakchain/chain")
-local Q = require("streakchain/quote")
+local F = require("coverlet/format")
+local C = require("coverlet/chain")
+local Q = require("coverlet/quote")
 
 local passed, failed = 0, 0
 local function eq(got, want, name)
