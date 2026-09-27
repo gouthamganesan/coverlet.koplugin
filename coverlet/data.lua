@@ -93,16 +93,21 @@ end
 --[[
 Books for the monthly and yearly goals, counted the way Bookshelf's Reading
 goal counts them, so the two never disagree: a book in the reading history
-that was last opened in the period and is marked finished. Books still being
-read in the period are counted too, for the goal's grey cells.
+that was last opened in the period and is marked finished. Books really
+under way (a tenth read or more, not on hold) are counted too, for the goal's
+grey cells; books only sampled, and KOReader's own files such as its guide,
+are not.
   -> { month = { finished, reading }, year = { finished, reading } }
 ]]
+Data.UNDER_WAY = 0.1
+
 function Data.bookCounts(now, history)
     if not history then
         local ok, rh = pcall(require, "readhistory")
         history = ok and rh and rh.hist or {}
     end
     local month_start, year_start = Chain.startOfMonth(now), Chain.startOfYear(now)
+    local own_dir = DataStorage:getDataDir() .. "/"
     local counts = { month = { finished = 0, reading = 0 }, year = { finished = 0, reading = 0 } }
     for _, entry in ipairs(history) do
         local t = entry.time or 0
@@ -115,7 +120,8 @@ function Data.bookCounts(now, history)
                 local kind
                 if status == "complete" or status == "finished" then
                     kind = "finished"
-                elseif status ~= "abandoned" and pct and pct > 0 and pct < 1 then
+                elseif status ~= "abandoned" and pct and pct >= Data.UNDER_WAY and pct < 1
+                    and entry.file:sub(1, #own_dir) ~= own_dir then
                     kind = "reading"
                 end
                 if kind then

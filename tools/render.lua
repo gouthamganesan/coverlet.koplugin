@@ -251,6 +251,7 @@ do
         { file = book("finished-this-month", "complete", 1), time = now - 3 * 86400 },
         { file = book("reading-now", "reading", 0.72), time = now - 3600 },
         { file = book("started-no-status", nil, 0.1), time = now - 5 * 86400 },
+        { file = book("only-sampled", "reading", 0.03), time = now - 4 * 86400 },
         { file = book("on-hold", "abandoned", 0.4), time = now - 2 * 86400 },
         { file = book("finished-in-march", "complete", 1), time = os.time{ year = 2026, month = 3, day = 10, hour = 12 } },
         { file = book("reading-in-june", "reading", 0.3), time = os.time{ year = 2026, month = 6, day = 2, hour = 12 } },
@@ -260,8 +261,15 @@ do
     local bc = Data.bookCounts(now, history)
     check(bc.month.finished == 1 and bc.year.finished == 2, "only finished books count toward the goals",
         bc.month.finished .. "/" .. bc.year.finished)
-    check(bc.month.reading == 2 and bc.year.reading == 3, "books still being read are counted apart",
+    check(bc.month.reading == 2 and bc.year.reading == 3, "books still being read are counted apart, not ones only sampled",
         bc.month.reading .. "/" .. bc.year.reading)
+    local own = DataStorage:getDataDir() .. "/help"
+    lfs.mkdir(own)
+    local guide = own .. "/quickstart.html"
+    local f = io.open(guide, "w"); f:write("x"); f:close()
+    local ds = DocSettings:open(guide); ds:saveSetting("summary", { status = "reading" }); ds:saveSetting("percent_finished", 0.62); ds:flush()
+    local with_guide = Data.bookCounts(now, { { file = guide, time = now - 60 } })
+    check(with_guide.month.reading == 0, "KOReader's own guide isn't a book being read")
 end
 local pages = Data.pagesSince(db_path, C.startOfDay(now))
 check(pages == 5, "sql pages today, each page once", pages)
