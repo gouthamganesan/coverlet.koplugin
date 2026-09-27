@@ -728,6 +728,13 @@ function StreakScreen:streakRow(bb, x, y, w, px, stats)
     -- above the months it counts; above the best run when there is one.
     local total = stats.calendar_total and line(stats.calendar_total, "sans", px(22), G55, px(26)) or nil
     local base = y + row_h - num.lh + num.base
+    -- Stacked above the best run, the total needs its own line's height over
+    -- the best run's; grow the row by whatever the font leaves short.
+    local short = (total and best) and (y + px(32) + total.base) - base or 0
+    if short > 0 then
+        row_h = row_h + short
+        base = base + short
+    end
     if bb then
         mark("streak", x, y, w, row_h)
         if px(flame.w) + px(14) + num.w + px(12) + unit.w + (best and px(24) + best_w or 0) > w then
