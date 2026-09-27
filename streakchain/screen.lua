@@ -50,12 +50,26 @@ local FONTS = {
 }
 local resolved = {}
 
+-- Font:getFace logs an error for every file it can't find, so skip the
+-- weights that aren't installed rather than asking for them each sleep.
+local installed
+local function isInstalled(name)
+    if not installed then
+        installed = {}
+        local ok, list = pcall(function() return require("fontlist"):getFontList() end)
+        for _, path in ipairs(ok and list or {}) do
+            installed[path:match("[^/]+$")] = true
+        end
+    end
+    return next(installed) == nil or installed[name]
+end
+
 -- px is the wanted size in real screen pixels; Font:getFace scales by DPI itself.
 local function face(role, px)
     local size = px / (Screen:scaleBySize(1000) / 1000)
     local names = resolved[role] and { resolved[role] } or FONTS[role]
     for _, name in ipairs(names) do
-        local f = Font:getFace(name, size)
+        local f = isInstalled(name) and Font:getFace(name, size)
         if f then
             resolved[role] = name
             return f
@@ -124,7 +138,9 @@ local function put(bb, l, x, baseline)
 end
 
 local function free(...)
-    for _, l in ipairs({ ... }) do
+    -- select, not ipairs: an absent line in the middle mustn't stop the rest being freed.
+    for i = 1, select("#", ...) do
+        local l = select(i, ...)
         if l then (l.t or l):free() end
     end
 end
@@ -708,6 +724,9 @@ function StreakScreen:streakRow(bb, x, y, w, px, stats)
     local unit = line("day streak", "sans", px(30), color, px(36))
     local best = stats.best_line and line(stats.best_line, "sans", px(30), G44, px(36)) or nil
     local best_w = best and best.w + px(8) + px(BEST_FLAME.w) or 0
+    -- The calendar's total, "38 h in 3 months", small and right-aligned just
+    -- above the months it counts; above the best run when there is one.
+    local total = stats.calendar_total and line(stats.calendar_total, "sans", px(22), G55, px(26)) or nil
     local base = y + row_h - num.lh + num.base
     if bb then
         mark("streak", x, y, w, row_h)
@@ -723,8 +742,17 @@ function StreakScreen:streakRow(bb, x, y, w, px, stats)
             put(bb, best, x + w - best_w, base)
             self:paintFlame(bb, x + w - px(BEST_FLAME.w), base - px(BEST_FLAME.h), px(BEST_FLAME.w), px(BEST_FLAME.h), "solid")
         end
+        if total then
+            -- Stacked in the space the big streak number leaves above the best run.
+            local tb = best and base - px(32) or base
+            if px(flame.w) + px(14) + num.w + px(12) + unit.w + px(24) + total.w > w
+                or tb - total.base < y then
+                clash("the three-month total has no room")
+            end
+            put(bb, total, x + w - total.w, tb)
+        end
     end
-    free(num, unit, best)
+    free(num, unit, best, total)
     return row_h
 end
 

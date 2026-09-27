@@ -149,7 +149,7 @@ end
 The calendar: this month and the (n - 1) before it, each laid out
 Monday-first. Days in the current run are marked so the screen can join them
 with a line, including across a week's or a month's edge.
-  { { time (noon on the 1st), offset (0 = starts on a Monday), days = {
+  { { time (noon on the 1st), offset (0 = starts on a Monday), seconds (read that month), days = {
       { day, level = "o"|"l"|"m"|"h"|"f", today, run, joins_prev, joins_next } } } }
 ]]
 function C.calendar(days, now, streak, read_today, n)
@@ -175,9 +175,10 @@ function C.calendar(days, now, streak, read_today, n)
         end
         local first = noon(y, m, 1)
         local count = os.date("*t", noon(y, m + 1, 0)).day
-        local month = { time = first, offset = C.weekdayIndex(first), days = {} }
+        local month = { time = first, offset = C.weekdayIndex(first), days = {}, seconds = 0 }
         for day = 1, count do
             local k = C.key(noon(y, m, day))
+            if k <= tk then month.seconds = month.seconds + (days[k] or 0) end
             local run = run_first ~= nil and k >= run_first and k <= run_last
             month.days[day] = {
                 day = day,

@@ -250,6 +250,16 @@ eq(sep[25].level, "m", "calendar today's level")
 eq(sep[26].level, "f", "calendar after today")
 eq(sep[20].level, "o", "calendar nothing read")
 eq(sep[23].level, "l", "calendar under 20 min")
+eq(F.calendarTotal(38 * 3600 + 1200, 3), "38 h in 3 months", "calendar total in hours")
+eq(F.calendarTotal(2700, 3), "45 min in 3 months", "calendar total under an hour")
+eq(F.calendarTotal(0, 3), nil, "calendar total hidden when nothing was read")
+do
+    local total = 0
+    for _, month in ipairs(cal) do total = total + month.seconds end
+    local want = 0
+    for k, s in pairs(build(read)) do if k <= C.key(fri) and k >= C.key(cal[1].time) then want = want + s end end
+    eq(total, want, "calendar months add up to the days they show")
+end
 eq(sep[22].level, "h", "calendar 40 min or more")
 eq(sep[1].level, "m", "calendar 20 to 39 min")
 eq(tostring(sep[20].run) .. " " .. tostring(sep[21].run) .. " " .. tostring(sep[25].run), "false true true", "calendar the run")

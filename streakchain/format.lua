@@ -290,6 +290,15 @@ function F.yearLine(seconds, now)
     return { label = "Read in " .. os.date("%Y", now or os.time()), value = value }
 end
 
+-- Beside the calendar's month names: all the reading it shows, "38 h in 3 months".
+-- Nothing when nothing was read, so an empty calendar doesn't say "0 min".
+function F.calendarTotal(seconds, months)
+    local m = math.floor((seconds or 0) / 60)
+    if m < 1 then return nil end
+    local value = m < 60 and (m .. " min") or (math.floor(m / 60) .. " h")
+    return value .. " in " .. months .. " months"
+end
+
 -- The daily quote: its text in curly quotes, and who said it (and where).
 function F.quoteText(q)
     return "“" .. q.text .. "”"

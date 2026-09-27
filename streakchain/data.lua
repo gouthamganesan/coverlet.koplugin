@@ -170,7 +170,8 @@ function Data.goals()
         read = function(key, default) return settings:readSetting(key, default) end
     end
     local active = read("micromodule_reading_goal_active", nil)
-    if type(active) ~= "table" then active = { daily = true, yearly = true } end
+    -- Bookshelf shows all four goals until one is switched off.
+    if type(active) ~= "table" then active = { daily = true, weekly = true, monthly = true, yearly = true } end
     local goals = {}
     for _, kind in ipairs({ "daily", "weekly", "monthly", "yearly" }) do
         if active[kind] then
@@ -192,7 +193,11 @@ function Data.statsModel(days, now, goals, counts)
     local c = Chain.compute(days, now)
     local goal_streak = goals.daily and Chain.goalStreak(days, now, goals.daily * 60) or nil
     local calendar = Chain.calendar(days, now, c.streak, c.read_today)
-    for _, month in ipairs(calendar) do month.name = Format.monthName(month.time) end
+    local calendar_seconds = 0
+    for _, month in ipairs(calendar) do
+        month.name = Format.monthName(month.time)
+        calendar_seconds = calendar_seconds + month.seconds
+    end
     return {
         today = Format.today(c.today_seconds, goals.daily, counts.pages_today, goal_streak),
         goals = Format.goalRows{
@@ -208,6 +213,7 @@ function Data.statsModel(days, now, goals, counts)
         best_line = Format.bestLine(c.best, c.streak),
         flame = Chain.flame(c.streak, c.read_today),
         calendar = calendar,
+        calendar_total = Format.calendarTotal(calendar_seconds, #calendar),
     }
 end
 
@@ -395,6 +401,16 @@ local function readerStats(now)
     })
 end
 
+-- "day 45 min, week 600 min, month 2, year 6" for the log line, so a goal
+-- that doesn't show can be traced to Bookshelf's settings.
+local function goalsLine(goals)
+    local parts = {}
+    for _, g in ipairs({ { "daily", "day", " min" }, { "weekly", "week", " min" }, { "monthly", "month", "" }, { "yearly", "year", "" } }) do
+        if goals[g[1]] then table.insert(parts, g[2] .. " " .. goals[g[1]] .. g[3]) end
+    end
+    return #parts > 0 and table.concat(parts, ", ") or "none"
+end
+
 function Data.build(ui, now)
     now = now or os.time()
     local model = { header = { date = Format.headerDate(now), battery = batteryWarning() }, quotes = Data.quotes() }
@@ -430,7 +446,8 @@ function Data.build(ui, now)
     logger.info("streakchain: sleep screen from", ui.document and "the reader" or "the file browser",
         "| book:", model.book and model.book.title or "none",
         "| next:", model.book and model.book.step or "-",
-        "| so far:", model.book and model.book.so_far or "-")
+        "| so far:", model.book and model.book.so_far or "-",
+        "| goals:", goalsLine(Data.goals()))
     return model
 end
 

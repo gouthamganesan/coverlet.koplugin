@@ -267,7 +267,13 @@ check(next(Data.goals()) == nil, "no Bookshelf file means no goals")
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6, micromodule_reading_goal_weekly = 600 })
 local goals = Data.goals()
 check(goals.daily == 45 and goals.yearly == 6, "goals read from Bookshelf's file", goals.daily .. "/" .. tostring(goals.yearly))
-check(goals.weekly == nil and goals.monthly == nil, "weekly and monthly are off until switched on")
+check(goals.weekly == 600, "with no switches saved, every goal is on, as in Bookshelf", tostring(goals.weekly))
+writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6,
+    micromodule_reading_goal_weekly = 600, micromodule_reading_goal_monthly = 2 })
+goals = Data.goals()
+check(goals.daily == 45 and goals.weekly == 600 and goals.monthly == 2 and goals.yearly == 6,
+    "the device's own settings file shows all four goals",
+    table.concat({ tostring(goals.daily), tostring(goals.weekly), tostring(goals.monthly), tostring(goals.yearly) }, "/"))
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6,
     micromodule_reading_goal_weekly = 600, micromodule_reading_goal_monthly = 2,
     micromodule_reading_goal_active = { daily = false, weekly = true, monthly = true, yearly = true } })
