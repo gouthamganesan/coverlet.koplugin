@@ -83,10 +83,12 @@ local function layoutProblems(layout, w, h)
 end
 
 local states = require("tools/fixtures")(loadCover)
+local rendered = {}
 for _, s in ipairs(states) do
     local name, model, w, h = s[1], s[2], s[3] or 1264, s[4] or 1680
     local before = #warned
     local widget = StreakScreen:new{ model = model, width = w, height = h }
+    rendered[name] = widget
     local ok, err = pcall(function() png(widget, name, w, h) end)
     check(ok and #warned == before, "render " .. name, err or warned[#warned])
     local problems = widget.layout and layoutProblems(widget.layout, w, h) or { "no layout recorded" }
@@ -105,6 +107,44 @@ for _, s in ipairs(states) do
                 dw .. "x" .. dh)
         end
     end
+end
+
+-- The daily quote: the next in the rotation that fits, a long one skipped
+-- for a shorter one when the gap is tight, none when nothing fits.
+local function shown(name)
+    local c = rendered[name] and rendered[name].quote_choice
+    if c == false then return "none" end
+    return c and c.author or "?"
+end
+for name, want in pairs({
+    ["18-many-chapters"] = "René Descartes", ["26-quote-short"] = "Stephen King",
+    ["27-quote-long"] = "John Locke", ["28-quote-none-fits"] = "none",
+    ["29-quote-skips-long"] = "Franz Kafka", ["30-landscape-quote"] = "Franz Kafka",
+
+}) do
+    check(shown(name) == want, name .. ": quote is " .. want, shown(name))
+end
+local long_q = rendered["27-quote-long"].model.quotes
+check(long_q.saves == 1 and long_q.saved.pos == 2 and long_q.saved.order[1] == 4,
+    "the rotation is saved once, moved on past the quote shown")
+local skip_q = rendered["29-quote-skips-long"].model.quotes
+check(skip_q.saved and skip_q.saved.order[1] == 2 and skip_q.saved.order[2] == 5 and skip_q.saved.pos == 2,
+    "a quote skipped for length stays next in the round")
+check(rendered["28-quote-none-fits"].model.quotes.saves == 0, "no quote shown, rotation left as it was")
+do
+    local again = Blitbuffer.new(1264, 1680, Blitbuffer.TYPE_BB8)
+    rendered["26-quote-short"]:paintTo(again, 0, 0)
+    again:free()
+    local q = rendered["26-quote-short"].model.quotes
+    check(q.saves == 1 and shown("26-quote-short") == "Stephen King", "a repaint keeps the same quote")
+end
+-- Every quote in the shipped list sets whole, in two lines at most, in 7b's
+-- text column beside a 2:3 cover.
+local column = 1264 - 2 * 56 - 315 - 14 - 48
+for i, q in ipairs(require("streakchain/quotes")) do
+    local ok_q = type(q.text) == "string" and q.text ~= "" and type(q.author) == "string" and q.author ~= ""
+    local h, lines = StreakScreen:quote(nil, 0, 0, column, function(v) return v end, q)
+    check(ok_q and h ~= nil, "quotes.lua #" .. i .. " fits two lines at " .. column .. " px", lines or "too long")
 end
 
 -- --------------------------------------------- 2. statistics SQL, synthetic ---

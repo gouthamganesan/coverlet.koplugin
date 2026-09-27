@@ -71,8 +71,31 @@ local function kafka(cover, o)
     }
 end
 
-local function header(battery)
-    return { date = F.headerDate(NOW), battery = battery }
+local function header(battery, now)
+    return { date = F.headerDate(now or NOW), battery = battery }
+end
+
+-- The fixtures keep their own four quotes, so a new list in quotes.lua
+-- doesn't move them. quotes(3, 1) starts the rotation at Descartes, then King.
+local QUOTES = {
+    { text = "Books are a uniquely portable magic.", author = "Stephen King", source = "On Writing" },
+    { text = "A book must be the axe for the frozen sea inside us.", author = "Franz Kafka" },
+    { text = "The reading of all good books is like conversation with the finest minds of past centuries.", author = "René Descartes" },
+    { text = "Reading furnishes the mind only with materials of knowledge; it is thinking that makes what we read ours.", author = "John Locke" },
+    -- Three lines at 7b's width: never fits, always skipped.
+    { text = "What an astonishing thing a book is. It’s a flat object made from a tree with flexible parts on which are imprinted lots of funny dark squiggles.",
+      author = "Carl Sagan", source = "Cosmos" },
+}
+
+local function quotes(...)
+    local order, seen = {}, {}
+    for _, i in ipairs({ ... }) do table.insert(order, i); seen[i] = true end
+    for i = 1, #QUOTES do
+        if not seen[i] then table.insert(order, i) end
+    end
+    local q = { list = QUOTES, state = { order = order, pos = 1 }, saves = 0 }
+    q.save = function(state) q.saved = state; q.saves = q.saves + 1 end
+    return q
 end
 
 local SHARP_STARTS = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389,
@@ -104,6 +127,10 @@ return function(cover)
     local s_default, s_read, s_long = stats(history()), stats(read_today), stats(long)
     local s_broken, s_first = stats(broken), stats(first, { daily = 45 }, { pages_today = 0 })
     local s_drawn = stats(as_drawn)
+
+    -- A June screen: every month in its calendar fits five rows.
+    local JUNE = os.time{ year = 2026, month = 6, day = 26, hour = 21 }
+    local june = seq({}, "2026-06-15", "m h l m m h m m h l 900")
 
     local list = {
         { "01-default", { header = header(), book = kafka(cover), stats = s_default } },
@@ -154,6 +181,23 @@ return function(cover)
         { "23-streak-two", { header = header(), book = kafka(cover), stats = stats(seq({}, "2026-09-24", "m 600")) } },
         { "24-streak-twelve", { header = header(), book = kafka(cover), stats = stats(run({}, "2026-09-14", 12, 1500)) } },
         { "25-landscape-goal-done", { header = header(), book = kafka(cover), stats = stats(goal_done) }, 1680, 1264 },
+        { "26-quote-short", { header = header(), book = sharp(cover), stats = s_drawn, quotes = quotes(1) } },
+        -- Two full lines need the room a five-row calendar leaves.
+        { "27-quote-long", { header = header(nil, JUNE), book = sharp(cover), stats = Data.statsModel(june, JUNE, GOALS, COUNTS),
+            quotes = quotes(4) } },
+        -- A title on two lines leaves too little room for any quote.
+        { "28-quote-none-fits", { header = header(), book = book{
+            title = "The Strange Case of Dr Jekyll and Mr Hyde", author = "Robert Louis Stevenson", pct = 0.4, page = 40, total = 100,
+            chapters = { 0, 0.2, 0.45, 0.7 },
+            step = { has_chapters = true, chapter_title = "Search for Mr Hyde", chapter_seconds = 900, book_seconds = 4200 },
+            cover = cover("jurassic") }, stats = s_drawn, quotes = quotes(1) } },
+        -- Sagan is next but too long, so Kafka shows and Sagan waits.
+        { "29-quote-skips-long", { header = header(), book = sharp(cover), stats = s_drawn, quotes = quotes(5, 2) } },
+        { "30-landscape-quote", { header = header(), book = sharp(cover), stats = s_drawn, quotes = quotes(2) }, 1680, 1264 },
     }
+    -- Every other state starts the rotation at Descartes, as drawn in 7b.
+    for _, s in ipairs(list) do
+        if not s[2].quotes then s[2].quotes = quotes(3) end
+    end
     return list, NOW
 end

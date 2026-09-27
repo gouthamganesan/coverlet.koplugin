@@ -1,9 +1,9 @@
 --[[
-Draws the model from streakchain/data.lua as design 7b ("Two-column ledger"):
-the book on top (cover, title, the next step, time to the end, time in the
-book so far) over its chapter bar; then the ledger, Today and Goals side by
-side; then the habit: the day streak with its flame, and a three-month
-calendar of reading days.
+Draws the model from streakchain/data.lua as design 7b ("Two-column ledger")
+on paper: the book on a light gray page (cover, title, the next step, a daily
+quote when there's room, time to the end and time in the book so far) over
+its chapter bar; then the stats on a white sheet: Today and Goals side by
+side, the day streak with its flame, and a three-month calendar.
 
 Layout is in the design's own units (a 1264x1680 portrait canvas, 1680x1264
 in landscape) scaled to the real screen, except the cover: it is drawn at
@@ -24,13 +24,15 @@ local logger = require("logger")
 
 local Chain = require("streakchain/chain")
 local Format = require("streakchain/format")
+local Quote = require("streakchain/quote")
 
 local Screen = Device.screen
 
 local function gray(v) return Blitbuffer.Color8(v) end
-local PAPER = Blitbuffer.COLOR_WHITE
+local PAPER = Blitbuffer.COLOR_WHITE -- the sheet under the stats
+local PAGE = gray(0xEE)              -- everything else
 local INK = gray(0x11)
-local G44, G55, G77 = gray(0x44), gray(0x55), gray(0x77)
+local G33, G44, G55, G77 = gray(0x33), gray(0x44), gray(0x55), gray(0x77)
 local G99, GBB = gray(0x99), gray(0xBB)
 local COVER_PAPER = gray(0xF7)
 
@@ -40,6 +42,7 @@ local FLAME_DIR = (debug.getinfo(1, "S").source:match("^@(.*/)[^/]*$") or "./") 
 -- Vollkorn and Atkinson Hyperlegible when installed, KOReader's own fonts otherwise.
 local FONTS = {
     title = { "Vollkorn-MediumItalic.ttf", "Vollkorn-Italic.ttf", "NotoSerif-Italic.ttf" },
+    italic = { "Vollkorn-Italic.ttf", "NotoSerif-Italic.ttf" },
     serif = { "Vollkorn-Regular.ttf", "NotoSerif-Regular.ttf" },
     number = { "Vollkorn-SemiBold.ttf", "Vollkorn-Bold.ttf", "NotoSerif-Bold.ttf" },
     sans = { "AtkinsonHyperlegible-Regular.ttf", "NotoSans-Regular.ttf" },
@@ -73,16 +76,19 @@ local function clash(what)
     if log then table.insert(log.clashes, what) end
 end
 
+-- A single line of text. TextWidget draws only its glyphs, so it sits on
+-- either surface.
 local function text(str, fc, color, max_w)
     return TextWidget:new{ text = str, face = fc, fgcolor = color or INK, padding = 0, max_width = max_w }
 end
 
 -- Wrapped text with lines lh px apart (a CSS line-height), at most max_lines.
+-- TextBoxWidget paints its own background, so bg must be the surface under it.
 local function textbox(str, fc, width, align, color, lh, bg, max_lines)
-    local line_height = lh and (lh / fc.size - 1) or 0.1
+    local line_height = lh / fc.size - 1
     local tb = TextBoxWidget:new{
         text = str, face = fc, width = width, alignment = align or "left",
-        fgcolor = color or INK, line_height = line_height, bgcolor = bg or PAPER,
+        fgcolor = color or INK, line_height = line_height, bgcolor = bg,
     }
     if max_lines then
         local h = tb:getLineHeight()
@@ -90,12 +96,19 @@ local function textbox(str, fc, width, align, color, lh, bg, max_lines)
             tb:free()
             tb = TextBoxWidget:new{
                 text = str, face = fc, width = width, alignment = align or "left",
-                fgcolor = color or INK, line_height = line_height, bgcolor = bg or PAPER,
+                fgcolor = color or INK, line_height = line_height, bgcolor = bg,
                 height = h * max_lines, height_overflow_show_ellipsis = true,
             }
         end
     end
     return tb
+end
+
+-- A textbox measured the CSS way: lines x line height, with glyphs taller
+-- than a line overhanging it evenly above and below instead of growing the
+-- box. Returns its height and how far up to paint it.
+local function boxed(tb)
+    return tb.lines_per_page * tb:getLineHeight(), math.floor((tb.line_glyph_extra_height or 0) / 2)
 end
 
 -- One line of text in a line box lh px tall, its glyphs centred in the box
@@ -212,7 +225,7 @@ end
 
 function StreakScreen:paintScreen(bb, x, y)
     local W, H = self.dimen.w, self.dimen.h
-    rect(bb, x, y, W, H, PAPER)
+    rect(bb, x, y, W, H, PAGE)
     local m = self.model or {}
     if W > H then
         return self:paintLandscape(bb, x, y, W, H, m)
@@ -345,18 +358,85 @@ function StreakScreen:hero(bb, x, y, w, px, hero)
     return h
 end
 
+-- --------------------------------------------------------------- quote ---
+
+local function quoteMetrics(px)
+    local m = Quote.METRICS
+    return { line = px(m.line), attribution_gap = px(m.attribution_gap), attribution = px(m.attribution), clear = px(m.clear) }
+end
+
+--[[
+The daily quote: Vollkorn italic 28/38 in #333, then who said it in
+Atkinson 22 #555. Never shrunk, never cut short: returns its height and its
+line count, or nil when it can't be set whole at this width.
+]]
+function StreakScreen:quote(bb, x, y, w, px, q)
+    local tb = textbox(Format.quoteText(q), face("italic", px(28)), w, "left", G33, px(38), PAGE)
+    local lines = #tb.vertical_string_list
+    local by = line(Format.quoteBy(q), "sans", px(22), G55, px(28), w)
+    local whole = not by.t:isTruncated() and lines <= Quote.MAX_LINES
+    local h = Quote.height(lines, quoteMetrics(px))
+    if bb and whole then
+        local _, dy = boxed(tb)
+        tb:paintTo(bb, x, y - dy)
+        put(bb, by, x, y + lines * px(38) + px(8) + by.base)
+    end
+    tb:free()
+    free(by)
+    if not whole then return nil end
+    return h, lines
+end
+
+--[[
+The quote for this sleep: the next in the rotation that fits the gap, chosen
+once per screen so a repaint doesn't move the rotation on. The rotation is
+saved through the model as soon as one is chosen.
+]]
+function StreakScreen:chooseQuote(gap, w, px)
+    local m = quoteMetrics(px)
+    local function fits(q)
+        local _, lines = self:quote(nil, 0, 0, w, px, q)
+        return lines ~= nil and Quote.fits(lines, gap, m)
+    end
+    if self.quote_choice ~= nil then
+        return self.quote_choice and fits(self.quote_choice) and self.quote_choice or nil
+    end
+    local quotes = self.model and self.model.quotes
+    if not (quotes and quotes.list and #quotes.list > 0) then return nil end
+    local cache = {}
+    local idx, state = Quote.pick(quotes.state, #quotes.list, function(i)
+        if cache[i] == nil then cache[i] = fits(quotes.list[i]) end
+        return cache[i]
+    end, quotes.random)
+    self.quote_choice = idx and quotes.list[idx] or false
+    if idx then
+        quotes.state = state
+        if quotes.save then
+            local ok, err = pcall(quotes.save, state)
+            if not ok then logger.warn("streakchain: could not save the quote rotation:", err) end
+        end
+    end
+    return self.quote_choice or nil
+end
+
+-- ----------------------------------------------------------- book band ---
+
 --[[
 The text beside the cover: title, author and next step at the top; time to
-the end and time in the book so far at the bottom, as far down as h allows.
-Returns the height of the top part and of the bottom part.
+the end and time in the book so far at the bottom, as far down as h allows;
+the quote, if any, centred in the gap between. Returns the height of the top
+part and of the bottom part.
 ]]
-function StreakScreen:bookText(bb, x, y, w, h, px, book)
-    local title = textbox(book.title or "", face("title", px(64)), w, "left", INK, px(90), PAPER, 2)
+function StreakScreen:bookText(bb, x, y, w, h, px, book, quote)
+    local title = textbox(book.title or "", face("title", px(64)), w, "left", INK, px(80), PAGE, 2)
     local author = book.author and line(book.author, "sans", px(30), G44, px(36), w) or nil
-    local step = book.step and textbox(book.step, face("sans", px(30)), w, "left", G44, px(36), PAPER, 2) or nil
-    local top_h = title:getSize().h
+    local step = book.step and textbox(book.step, face("sans", px(30)), w, "left", G44, px(36), PAGE, 2) or nil
+    local title_h, title_dy = boxed(title)
+    local step_h, step_dy = 0, 0
+    if step then step_h, step_dy = boxed(step) end
+    local top_h = title_h
     if author then top_h = top_h + px(8) + author.lh end
-    if step then top_h = top_h + (author and px(4) or px(8)) + step:getSize().h end
+    if step then top_h = top_h + (author and px(4) or px(8)) + step_h end
 
     local so_far = book.so_far and line(book.so_far, "sans", px(30), G44, px(36), w) or nil
     if bb and so_far and so_far.t:isTruncated() then clash("time in the book cut short") end
@@ -365,9 +445,10 @@ function StreakScreen:bookText(bb, x, y, w, h, px, book)
     if so_far then bottom_h = bottom_h + (book.hero and px(24) or 0) + so_far.lh end
 
     if bb then
+        mark("book text", x, y, w, top_h)
         local cy = y
-        title:paintTo(bb, x, cy)
-        cy = cy + title:getSize().h
+        title:paintTo(bb, x, cy - title_dy)
+        cy = cy + title_h
         if author then
             cy = cy + px(8)
             put(bb, author, x, cy + author.base)
@@ -375,9 +456,16 @@ function StreakScreen:bookText(bb, x, y, w, h, px, book)
         end
         if step then
             cy = cy + (author and px(4) or px(8))
-            step:paintTo(bb, x, cy)
+            step:paintTo(bb, x, cy - step_dy)
         end
         local by = y + math.max(top_h + px(32), h - bottom_h)
+        if quote then
+            local qh = self:quote(nil, x, 0, w, px, quote)
+            local qy = y + top_h + math.floor((by - y - top_h - qh) / 2)
+            mark("quote", x, qy, w, qh)
+            self:quote(bb, x, qy, w, px, quote)
+        end
+        if bottom_h > 0 then mark("time to the end", x, by, w, bottom_h) end
         if book.hero then
             by = by + self:hero(bb, x, by, w, px, book.hero) + px(24)
         end
@@ -389,27 +477,47 @@ function StreakScreen:bookText(bb, x, y, w, h, px, book)
     return top_h, bottom_h
 end
 
--- Cover on the left, text on the right. Returns its height.
-function StreakScreen:bookBand(bb, x, y, w, max_cover_h, px, book)
+--[[
+Measures the band once: the cover's size, the text column's position and
+width, the heights of its top and bottom parts, and the column's own height
+without a quote (the cover's, or more when the text needs it).
+]]
+function StreakScreen:bandParts(w, max_cover_h, px, book)
     local shadow = px(14)
     local cw, ch = self:coverSize(book, math.floor(w * 0.42) - shadow, max_cover_h, px)
-    local tx = x + cw + shadow + px(48)
-    local tw = x + w - tx
-    local top_h, bottom_h = self:bookText(nil, tx, y, tw, ch, px, book)
-    local text_h = math.max(ch, top_h + px(32) + bottom_h)
-    if bb then
-        self:cover(bb, x, y, cw, ch, px, book)
-        self:bookText(bb, tx, y, tw, text_h, px, book)
-        mark("cover", x, y, cw + shadow, ch + shadow)
-        mark("book text", tx, y, tw, text_h)
-    end
-    return math.max(ch + shadow, text_h)
+    local tx = cw + shadow + px(48)
+    local tw = w - tx
+    local top_h, bottom_h = self:bookText(nil, 0, 0, tw, 0, px, book)
+    return {
+        cw = cw, ch = ch, shadow = shadow, tx = tx, tw = tw, top = top_h, bottom = bottom_h,
+        column = math.max(ch, top_h + px(32) + bottom_h),
+    }
 end
 
--- The book's bar: its chapters as marks, the current chapter's two marks
--- full height, and the reading position.
+local function bandHeight(parts, column)
+    return math.max(parts.ch + parts.shadow, column or parts.column)
+end
+
+-- Cover on the left, text on the right, in a column `column` px tall.
+function StreakScreen:bookBand(bb, x, y, px, book, parts, column, quote)
+    column = column or parts.column
+    if bb then
+        self:cover(bb, x, y, parts.cw, parts.ch, px, book)
+        self:bookText(bb, x + parts.tx, y, parts.tw, column, px, book, quote)
+        mark("cover", x, y, parts.cw + parts.shadow, parts.ch + parts.shadow)
+    end
+    return bandHeight(parts, column)
+end
+
+--[[
+The book's bar: its chapters as marks, the current chapter's two marks
+full height, and the reading position. One function, so the bar can be
+swapped for another design whole.
+]]
+local BAR_H = 40
+
 function StreakScreen:chapterBar(bb, x, y, w, px, book)
-    local H = px(40)
+    local H = px(BAR_H)
     if not bb then return H end
     mark("chapter bar", x, y, w, H)
     local pct = book.finished and 1 or math.max(0, math.min(1, book.pct or 0))
@@ -432,17 +540,19 @@ function StreakScreen:chapterBar(bb, x, y, w, px, book)
     return H
 end
 
+local BAR_GAP = 36
+
 -- The whole book block: band, then the bar. Returns its height.
-function StreakScreen:bookBlock(bb, x, y, w, max_cover_h, px, book)
-    local band = self:bookBand(bb, x, y, w, max_cover_h, px, book)
-    self:chapterBar(bb, x, y + band + px(36), w, px, book)
-    return band + px(36) + px(40)
+function StreakScreen:bookBlock(bb, x, y, w, px, book, parts, column, quote)
+    local band = self:bookBand(bb, x, y, px, book, parts, column, quote)
+    self:chapterBar(bb, x, y + band + px(BAR_GAP), w, px, book)
+    return band + px(BAR_GAP) + px(BAR_H)
 end
 
 -- Nothing to show a cover for: a short line in the book's place.
 function StreakScreen:noBook(bb, x, y, w, px)
-    local title = textbox(Format.NO_BOOK_TITLE, face("title", px(72)), w, "center", INK, px(90))
-    local sub = textbox(Format.NO_BOOK_SUB, face("sans", px(30)), w, "center", G44, px(36))
+    local title = textbox(Format.NO_BOOK_TITLE, face("title", px(72)), w, "center", INK, px(90), PAGE)
+    local sub = textbox(Format.NO_BOOK_SUB, face("sans", px(30)), w, "center", G44, px(36), PAGE)
     local h = title:getSize().h + px(12) + sub:getSize().h
     if bb then
         mark("no book", x, y, w, h)
@@ -565,7 +675,9 @@ function StreakScreen:paintFlame(bb, x, y, w, h, variant)
     return true
 end
 
--- The flame, the day streak and the best run on one row, then the note.
+local BEST_FLAME = { w = 23, h = 26 } -- the small solid flame after the best run
+
+-- The flame, the day streak, and the best run with its own small flame.
 function StreakScreen:streakRow(bb, x, y, w, px, stats)
     local flame = stats.flame
     local color = flame.muted and G77 or INK
@@ -573,13 +685,11 @@ function StreakScreen:streakRow(bb, x, y, w, px, stats)
     local num = line(tostring(stats.streak or 0), "number", px(56), color, px(60))
     local unit = line("day streak", "sans", px(30), color, px(36))
     local best = stats.best_line and line(stats.best_line, "sans", px(30), G44, px(36)) or nil
-    local note = line(stats.note or "", "sans", px(26), G44, px(34), w)
-    if bb and note.t:isTruncated() then clash("streak note cut short") end
-    local box_top = y + row_h - num.lh
-    local base = box_top + num.base
+    local best_w = best and best.w + px(8) + px(BEST_FLAME.w) or 0
+    local base = y + row_h - num.lh + num.base
     if bb then
-        mark("streak", x, y, w, row_h + px(10) + px(34))
-        if px(flame.w) + px(14) + num.w + px(12) + unit.w + (best and px(24) + best.w or 0) > w then
+        mark("streak", x, y, w, row_h)
+        if px(flame.w) + px(14) + num.w + px(12) + unit.w + (best and px(24) + best_w or 0) > w then
             clash("streak row runs into the best run")
         end
         local fw, fh = px(flame.w), px(flame.h)
@@ -587,11 +697,13 @@ function StreakScreen:streakRow(bb, x, y, w, px, stats)
         local nx = x + fw + px(14)
         put(bb, num, nx, base)
         put(bb, unit, nx + num.w + px(12), base)
-        if best then put(bb, best, x + w - best.w, base) end
-        put(bb, note, x, y + row_h + px(10) + note.base)
+        if best then
+            put(bb, best, x + w - best_w, base)
+            self:paintFlame(bb, x + w - px(BEST_FLAME.w), base - px(BEST_FLAME.h), px(BEST_FLAME.w), px(BEST_FLAME.h), "solid")
+        end
     end
-    free(num, unit, best, note)
-    return row_h + px(10) + px(34)
+    free(num, unit, best)
+    return row_h
 end
 
 -- Three months of reading days, Monday-first, with the current run joined up.
@@ -667,26 +779,36 @@ function StreakScreen:habitBlock(bb, x, y, w, px, stats, col_gap)
     return sh + px(16) + ch
 end
 
--- Shown in place of the ledger and the calendar when Reading statistics is off.
+-- Shown in place of the stats when Reading statistics is off.
 function StreakScreen:hint(bb, x, y, w, px)
-    local note = textbox(Format.STATS_OFF_NOTE, face("serif", px(40)), w, "left", INK, px(52))
-    local sub = textbox(Format.STATS_OFF_HINT, face("sans", px(30)), w, "left", G44, px(36))
+    local note = textbox(Format.STATS_OFF_NOTE, face("serif", px(40)), w, "left", INK, px(52), PAPER)
+    local sub = textbox(Format.STATS_OFF_HINT, face("sans", px(30)), w, "left", G44, px(36), PAPER)
     local nh, sh = note:getSize().h, sub:getSize().h
     if bb then
-        mark("hint", x, y, w, px(26) + nh + px(8) + sh)
-        rect(bb, x, y, w, px(2), INK)
-        note:paintTo(bb, x, y + px(26))
-        sub:paintTo(bb, x, y + px(26) + nh + px(8))
+        mark("hint", x, y, w, nh + px(8) + sh)
+        note:paintTo(bb, x, y)
+        sub:paintTo(bb, x, y + nh + px(8))
     end
     note:free(); sub:free()
-    return px(26) + nh + px(8) + sh
+    return nh + px(8) + sh
 end
 
 -- -------------------------------------------------------------- layouts ---
 
-local MARGIN = { top = 56, side = 56, bottom = 52 }
-local COVER_H = 420        -- the design's cover height beside the ledger
-local COVER_H_ALONE = 640  -- with no ledger under it (statistics off)
+local MARGIN = { top = 56, side = 56, bottom = 28 }
+-- The white sheet under the stats reaches 28 px past the content on each
+-- side and down to the bottom margin, with a 2 px rule along its top.
+local SHEET = { bleed = 28, top = 26, bottom = 28, gap = 44 }
+local COVER_H = 420        -- the design's cover height beside the stats
+local COVER_H_ALONE = 640  -- with no stats under it (statistics off)
+local QUOTE_COLUMN = 520   -- the text column may grow to this to make room for a quote
+local MIN_GAP = 12         -- between header, book and sheet, as tight as 7b's paper and quote boards get
+
+local function sheet(bb, x, y, w, bottom, px)
+    local b = px(SHEET.bleed)
+    rect(bb, x - b, y, w + 2 * b, bottom - y, PAPER)
+    rect(bb, x - b, y, w + 2 * b, px(2), INK)
+end
 
 --[[
 Stacks blocks from top to bottom with the free space shared out evenly
@@ -704,11 +826,21 @@ local function stack(bb, top, bottom, blocks, min_gap)
     end
 end
 
--- The tallest cover that still leaves room for everything else: the design's
--- height when it fits, shorter on a crowded screen.
-local function coverRoom(px, avail, others, n_gaps, want)
-    local room = avail - others - n_gaps * px(24) - px(36) - px(40) - px(14)
-    return math.max(px(160), math.min(px(want), room))
+--[[
+The book block for a space `room` px tall: the cover at the design's height
+(or less, on a crowded screen), and the text column grown towards
+QUOTE_COLUMN when that makes room for a quote. Returns the block's height
+and a function that paints it.
+]]
+function StreakScreen:fitBook(bb, x, w, px, book, room, want_cover)
+    local cover_h = math.max(px(160), math.min(px(want_cover), room - px(BAR_GAP) - px(BAR_H) - px(14)))
+    local parts = self:bandParts(w, cover_h, px, book)
+    local spare = room - (bandHeight(parts) + px(BAR_GAP) + px(BAR_H))
+    local column = math.max(parts.column, math.min(px(QUOTE_COLUMN), parts.column + math.max(0, spare)))
+    local quote = bb and self:chooseQuote(column - parts.top - parts.bottom, parts.tw, px) or nil
+    if not quote then column = parts.column end
+    local h = bandHeight(parts, column) + px(BAR_GAP) + px(BAR_H)
+    return h, function(y) self:bookBlock(bb, x, y, w, px, book, parts, column, quote) end
 end
 
 function StreakScreen:paintPortrait(bb, x0, y0, W, H, m)
@@ -719,44 +851,47 @@ function StreakScreen:paintPortrait(bb, x0, y0, W, H, m)
     local col_gap = px(56)
     local col_w = math.floor((cw - col_gap) / 2)
 
-    local blocks = { { h = px(32), paint = function(y) self:header(bb, left, y, cw, px, m.header) end } }
-    local lower = {}
+    -- The stats on their sheet, or the hint when statistics is off.
+    local lower_h, paint_lower
     if m.stats then
         local s = m.stats
-        local ledger_h = px(2) + px(24) + math.max(
+        local ledger_h = math.max(
             self:todayColumn(nil, left, 0, col_w, px, s.today),
             self:goalsColumn(nil, left, 0, col_w, px, s.goals, s.year))
-        table.insert(lower, { h = ledger_h, paint = function(y)
-            rect(bb, left, y, cw, px(2), INK)
-            self:todayColumn(bb, left, y + px(26), col_w, px, s.today)
-            self:goalsColumn(bb, left + col_w + col_gap, y + px(26), cw - col_w - col_gap, px, s.goals, s.year)
-        end })
-        table.insert(lower, { h = self:habitBlock(nil, left, 0, cw, px, s, px(48)), paint = function(y)
-            self:habitBlock(bb, left, y, cw, px, s, px(48))
-        end })
+        local habit_h = self:habitBlock(nil, left, 0, cw, px, s, px(48))
+        lower_h = px(SHEET.top) + ledger_h + px(SHEET.gap) + habit_h + px(SHEET.bottom)
+        paint_lower = function(y)
+            sheet(bb, left, y, cw, bottom, px)
+            local cy = y + px(SHEET.top)
+            self:todayColumn(bb, left, cy, col_w, px, s.today)
+            self:goalsColumn(bb, left + col_w + col_gap, cy, cw - col_w - col_gap, px, s.goals, s.year)
+            self:habitBlock(bb, left, cy + ledger_h + px(SHEET.gap), cw, px, s, px(48))
+        end
     else
-        table.insert(lower, { h = self:hint(nil, left, 0, cw, px), paint = function(y) self:hint(bb, left, y, cw, px) end })
+        lower_h = px(SHEET.top) + self:hint(nil, left, 0, cw, px) + px(SHEET.bottom)
+        paint_lower = function(y)
+            sheet(bb, left, y, cw, bottom, px)
+            self:hint(bb, left, y + px(SHEET.top), cw, px)
+        end
     end
-    local lower_h = 0
-    for _, b in ipairs(lower) do lower_h = lower_h + b.h end
 
+    local blocks = { { h = px(32), paint = function(y) self:header(bb, left, y, cw, px, m.header) end } }
     if m.book then
-        local cover_h = coverRoom(px, bottom - top, px(32) + lower_h, #lower + 1,
-            m.stats and COVER_H or COVER_H_ALONE)
-        table.insert(blocks, { h = self:bookBlock(nil, left, 0, cw, cover_h, px, m.book), paint = function(y)
-            self:bookBlock(bb, left, y, cw, cover_h, px, m.book)
-        end })
+        local room = bottom - top - px(32) - lower_h - 2 * px(MIN_GAP)
+        local h, paint = self:fitBook(bb, left, cw, px, m.book, room, m.stats and COVER_H or COVER_H_ALONE)
+        table.insert(blocks, { h = h, paint = paint })
     else
         table.insert(blocks, { h = self:noBook(nil, left, 0, cw, px), paint = function(y) self:noBook(bb, left, y, cw, px) end })
     end
-    for _, b in ipairs(lower) do table.insert(blocks, b) end
-    stack(bb, top, bottom, blocks, px(24))
+    table.insert(blocks, { h = lower_h, paint = paint_lower })
+    stack(bb, top, bottom, blocks, px(MIN_GAP))
 end
 
 --[[
-Landscape: the book and the habit on the left, the ledger on the right,
-Today level with the book and Goals level with the streak. Without
-statistics it's the portrait order across the full width.
+Landscape: the book and the streak on the left, Today and Goals on the
+right, Today level with the book and Goals level with the streak. The stats
+sit on one L-shaped sheet. Without statistics it's the portrait order across
+the full width.
 ]]
 function StreakScreen:paintLandscape(bb, x0, y0, W, H, m)
     local px, ox, oy = scaler(W, H, 1680, 1264)
@@ -770,48 +905,59 @@ function StreakScreen:paintLandscape(bb, x0, y0, W, H, m)
     local rw = px(500)
     local lw = cw - rw - px(56)
     local rx = left + lw + px(56)
+    local bleed = px(SHEET.bleed)
 
     self:header(bb, left, top, cw, px, m.header)
+    local body_top = top + px(32)
     local habit_h = self:habitBlock(nil, left, 0, lw, px, s, px(32))
-    local habit_y = bottom - habit_h
-    local body
+    local habit_y = bottom - px(SHEET.bottom) - habit_h
+    local sheet_y = habit_y - px(SHEET.top)
+    local room = sheet_y - body_top - 2 * px(MIN_GAP)
+    local book_y, paint_book, book_h
     if m.book then
-        local cover_h = coverRoom(px, bottom - top, px(32) + habit_h, 2, COVER_H)
-        local book_h = self:bookBlock(nil, left, 0, lw, cover_h, px, m.book)
-        body = top + px(32) + math.max(px(24), math.floor((habit_y - top - px(32) - book_h) / 2))
-        self:bookBlock(bb, left, body, lw, cover_h, px, m.book)
+        book_h, paint_book = self:fitBook(bb, left, lw, px, m.book, room, COVER_H)
+        book_y = body_top + math.max(px(MIN_GAP), math.floor((sheet_y - body_top - book_h) / 2))
     else
-        body = top + px(32) + px(24)
-        local book_h = self:noBook(nil, left, 0, lw, px)
-        self:noBook(bb, left, body + math.floor((habit_y - body - book_h) / 2), lw, px)
+        book_h = self:noBook(nil, left, 0, lw, px)
+        book_y = body_top + math.floor((sheet_y - body_top - book_h) / 2)
+        paint_book = function(y) self:noBook(bb, left, y, lw, px) end
     end
+    local today_y = m.book and book_y or body_top + px(MIN_GAP)
+
+    -- The sheet: under Today and Goals from Today's top, and under the
+    -- streak from its own top, meeting at the column gap.
+    rect(bb, rx - bleed, today_y, rw + 2 * bleed, bottom - today_y, PAPER)
+    rect(bb, left - bleed, sheet_y, rx - left, bottom - sheet_y, PAPER)
+    rect(bb, rx - bleed, today_y, rw + 2 * bleed, px(2), INK)
+    paint_book(book_y)
     self:habitBlock(bb, left, habit_y, lw, px, s, px(32))
 
-    local today_h = px(26) + self:todayColumn(nil, rx, 0, rw, px, s.today)
-    local goals_h = px(26) + self:goalsColumn(nil, rx, 0, rw, px, s.goals, s.year)
-    local today_y = body
-    -- Goals level with the streak when there is room, else under Today.
-    local goals_y = math.min(math.max(habit_y, today_y + today_h + px(40)), bottom - goals_h)
-    rect(bb, rx, today_y, rw, px(2), INK)
-    self:todayColumn(bb, rx, today_y + px(26), rw, px, s.today)
-    rect(bb, rx, goals_y, rw, px(2), INK)
-    self:goalsColumn(bb, rx, goals_y + px(26), rw, px, s.goals, s.year)
+    local today_h = px(SHEET.top) + self:todayColumn(nil, rx, 0, rw, px, s.today)
+    local goals_h = px(SHEET.top) + self:goalsColumn(nil, rx, 0, rw, px, s.goals, s.year)
+    self:todayColumn(bb, rx, today_y + px(SHEET.top), rw, px, s.today)
+    -- Goals level with the streak when there is room, else under Today; its
+    -- rule runs on from the streak's so the two read as one line.
+    local goals_y = math.min(math.max(sheet_y, today_y + today_h + px(40)), bottom - px(SHEET.bottom) - goals_h)
+    rect(bb, left - bleed, sheet_y, rx - left, px(2), INK)
+    rect(bb, rx - bleed, goals_y, rw + 2 * bleed, px(2), INK)
+    self:goalsColumn(bb, rx, goals_y + px(SHEET.top), rw, px, s.goals, s.year)
 end
 
 -- Statistics off in landscape: header, book (or its absence), then the hint.
 function StreakScreen:paintPortraitOrder(bb, left, top, bottom, cw, px, m)
-    local hint_h = self:hint(nil, left, 0, cw, px)
+    local hint_h = px(SHEET.top) + self:hint(nil, left, 0, cw, px) + px(SHEET.bottom)
     local blocks = { { h = px(32), paint = function(y) self:header(bb, left, y, cw, px, m.header) end } }
     if m.book then
-        local cover_h = coverRoom(px, bottom - top, px(32) + hint_h, 2, COVER_H_ALONE)
-        table.insert(blocks, { h = self:bookBlock(nil, left, 0, cw, cover_h, px, m.book), paint = function(y)
-            self:bookBlock(bb, left, y, cw, cover_h, px, m.book)
-        end })
+        local h, paint = self:fitBook(bb, left, cw, px, m.book, bottom - top - px(32) - hint_h - 2 * px(MIN_GAP), COVER_H_ALONE)
+        table.insert(blocks, { h = h, paint = paint })
     else
         table.insert(blocks, { h = self:noBook(nil, left, 0, cw, px), paint = function(y) self:noBook(bb, left, y, cw, px) end })
     end
-    table.insert(blocks, { h = hint_h, paint = function(y) self:hint(bb, left, y, cw, px) end })
-    stack(bb, top, bottom, blocks, px(24))
+    table.insert(blocks, { h = hint_h, paint = function(y)
+        sheet(bb, left, y, cw, bottom, px)
+        self:hint(bb, left, y + px(SHEET.top), cw, px)
+    end })
+    stack(bb, top, bottom, blocks, px(MIN_GAP))
 end
 
 return StreakScreen

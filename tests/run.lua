@@ -9,6 +9,7 @@ package.path = "./?.lua;" .. package.path
 
 local F = require("streakchain/format")
 local C = require("streakchain/chain")
+local Q = require("streakchain/quote")
 
 local passed, failed = 0, 0
 local function eq(got, want, name)
@@ -69,16 +70,15 @@ eq(F.stepLine({ has_chapters = true, chapter_title = "Chapter Thirteen", chapter
 eq(F.stepLine(base, true), "Finished", "step line finished")
 eq(F.stepLine({}, false), nil, "step line with nothing to say")
 
--- -------------------------------------------------------- streak note ---
-eq(F.streakNote(0, false, 12), F.NOTE_NEW, "note no run")
-eq(F.streakNote(4, false, 12), "Read today to make it 5.", "note streak guard")
-eq(F.streakNote(5, true, 12), F.NOTE_IN, "note today read")
-eq(F.streakNote(31, true, 31), F.NOTE_BEST, "note longest")
-eq(F.streakNote(1, true, 1), F.NOTE_IN, "note first day is not a record")
-eq(F.streakNote(4, false, 4), "Read today to make it 5.", "note guard wins over record")
-eq(F.bestLine(12, 4), "Best run: 12", "best line")
+-- ------------------------------------------------------------ best run ---
+eq(F.bestLine(12, 4), "Best run: 12 days", "best line")
+eq(F.bestLine(2, 0), "Best run: 2 days", "best line at its smallest is still plural")
 eq(F.bestLine(4, 4), nil, "best line hidden when current")
-eq(F.bestLine(1, 0), nil, "best line hidden under 2")
+eq(F.bestLine(1, 0), nil, "best line hidden under 2, so never '1 days'")
+for best = 1, 40 do
+    local l = F.bestLine(best, 0)
+    eq(l == nil or l:match(" days$") ~= nil and best >= 2, true, "best line reads right at " .. best)
+end
 
 -- ------------------------------------------------------------- header ---
 local fri = os.time{ year = 2026, month = 9, day = 25, hour = 21 }
@@ -208,7 +208,7 @@ for _ = 1, 31 do run31[C.key(tt)] = 2700; tt = C.addDays(tt, 1) end
 r = C.compute(run31, fri)
 eq(r.streak, 31, "chain long streak")
 eq(r.best, 31, "chain long best")
-eq(F.streakNote(r.streak, r.read_today, r.best), F.NOTE_BEST, "chain long note")
+eq(F.bestLine(r.best, r.streak), nil, "chain long run is its own best")
 
 -- Month and year boundaries.
 local ny = os.time{ year = 2027, month = 1, day = 1, hour = 9 }
@@ -306,6 +306,65 @@ from, to = C.chapterBounds({ 0.34, 0.69 }, 0.2)
 eq(tostring(from) .. " " .. tostring(to), "nil 0.34", "chapter bounds in the first chapter")
 from, to = C.chapterBounds({ 0.34, 0.69 }, 0.9)
 eq(tostring(from) .. " " .. tostring(to), "0.69 nil", "chapter bounds in the last chapter")
+
+-- -------------------------------------------------------------- quote ---
+eq(F.quoteText({ text = "Books are a uniquely portable magic." }), "“Books are a uniquely portable magic.”", "quote in curly quotes")
+eq(F.quoteBy({ author = "Stephen King", source = "On Writing" }), "Stephen King · On Writing", "quote by, with source")
+eq(F.quoteBy({ author = "Franz Kafka" }), "Franz Kafka", "quote by, author only")
+
+-- Fit: lines of 38, 8 + 28 for who said it, 14 clear above and below.
+eq(Q.height(1), 74, "quote one line tall")
+eq(Q.height(2), 112, "quote two lines tall")
+eq(Q.fits(1, 102), true, "one line fits its exact gap")
+eq(Q.fits(1, 101), false, "one line needs 14 clear each side")
+eq(Q.fits(2, 140), true, "two lines fit their exact gap")
+eq(Q.fits(2, 139), false, "two lines don't fit a pixel less")
+eq(Q.fits(3, 1000), false, "three lines never fit")
+eq(Q.fits(0, 1000), false, "an empty quote doesn't fit")
+
+-- Rotation: a fixed random so the shuffle is known.
+local function first(k) return 1 end -- Fisher-Yates with j = 1 every time
+local order = Q.shuffle(4, first)
+eq(table.concat(order, " "), "2 3 4 1", "shuffle with a fixed random")
+local all = function() return true end
+local state, seen, picks = nil, {}, {}
+for _ = 1, 4 do
+    local i
+    i, state = Q.pick(state, 4, all, first)
+    seen[i] = (seen[i] or 0) + 1
+    table.insert(picks, i)
+end
+local once = true
+for i = 1, 4 do once = once and seen[i] == 1 end
+eq(once, true, "no repeat until all have shown: " .. table.concat(picks, " "))
+eq(state.pos, 5, "round used up")
+local i5
+i5, state = Q.pick(state, 4, all, first)
+eq(state.pos, 2, "a new round starts after the last")
+eq(i5 ~= nil, true, "the new round shows a quote")
+
+-- Skip: 4 is too long today, so 2 shows and 4 waits its turn.
+local fits = function(i) return i ~= 4 end
+local picked, st = Q.pick({ order = { 4, 2, 1, 3 }, pos = 1 }, 4, fits)
+eq(picked, 2, "a quote too long is skipped for the next that fits")
+eq(table.concat(st.order, " ") .. " @" .. st.pos, "2 4 1 3 @2", "the skipped quote stays next in the round")
+picked, st = Q.pick(st, 4, all)
+eq(picked, 4, "on a roomier day the skipped quote shows")
+-- Only too-long ones left in the round: start the next round.
+picked, st = Q.pick({ order = { 1, 2, 3, 4 }, pos = 4 }, 4, fits, first)
+eq(picked ~= nil and picked ~= 4, true, "only unfit ones left: a new round")
+-- Nothing fits at all: nothing shows and the rotation stays put.
+local none = function() return false end
+local keep = { order = { 3, 1, 2, 4 }, pos = 2 }
+picked, st = Q.pick(keep, 4, none)
+eq(picked, nil, "nothing fits, the gap stays empty")
+eq(st, keep, "nothing fits, the rotation doesn't move")
+-- A saved rotation that no longer matches the list is started afresh.
+picked, st = Q.pick({ order = { 1, 2, 3 }, pos = 2 }, 4, all, first)
+eq(#st.order .. " " .. st.pos, "4 2", "a list of a new length starts a new round")
+picked, st = Q.pick({ order = { 1, 1, 2, 3 }, pos = 1 }, 4, all, first)
+eq(table.concat(st.order, " "), "2 3 4 1", "a corrupt rotation is replaced")
+eq(Q.pick(nil, 0, all), nil, "no quotes, nothing to show")
 
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

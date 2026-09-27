@@ -15,10 +15,11 @@ so streakchain/screen.lua only ever draws and never asks KOReader anything.
       today = { num, unit, fraction | nil, done, rows = { { label, value } } },
       goals = { { label, value, fraction, segments | nil, filled }, ... },
       year = { label, value },                 -- "Read in 2026" / "86 h"
-      streak, best, read_today, best_line, note,
+      streak, best, read_today, best_line,
       flame = { variant, w, h, drop, muted },
       calendar = { { name, offset, days = { { day, level, today, run, joins_prev, joins_next } } } },
   }
+  model.quotes = { list, state, save, random }   -- the screen picks one that fits
 ]]
 
 local DataStorage = require("datastorage")
@@ -29,6 +30,7 @@ local logger = require("logger")
 
 local Chain = require("streakchain/chain")
 local Format = require("streakchain/format")
+local QUOTES = require("streakchain/quotes")
 
 local Data = {}
 
@@ -203,9 +205,25 @@ function Data.statsModel(days, now, goals, counts)
         best = c.best,
         read_today = c.read_today,
         best_line = Format.bestLine(c.best, c.streak),
-        note = Format.streakNote(c.streak, c.read_today, c.best),
         flame = Chain.flame(c.streak, c.read_today),
         calendar = calendar,
+    }
+end
+
+--[[
+The daily quote: the list and where the rotation stands. The screen picks
+the next one that fits the gap beside the cover (the gap is only known once
+it's laid out) and saves the rotation through save().
+]]
+local QUOTE_KEY = "streakchain_quote"
+
+function Data.quotes()
+    math.randomseed(os.time())
+    return {
+        list = QUOTES,
+        state = G_reader_settings:readSetting(QUOTE_KEY),
+        save = function(state) G_reader_settings:saveSetting(QUOTE_KEY, state) end,
+        random = function(k) return math.random(k) end,
     }
 end
 
@@ -377,7 +395,7 @@ end
 
 function Data.build(ui, now)
     now = now or os.time()
-    local model = { header = { date = Format.headerDate(now), battery = batteryWarning() } }
+    local model = { header = { date = Format.headerDate(now), battery = batteryWarning() }, quotes = Data.quotes() }
     local stats_on = Data.statsEnabled(ui)
 
     -- The statistics plugin buffers the current session in memory and only

@@ -6,7 +6,7 @@ luajit. The wording rules come from the design canvas:
 
   * nothing refers to the time of day ("today", never "tonight")
   * no singular/plural splits where a unit can avoid it: "11 min",
-    "4 day streak", "Best run: 12"
+    "4 day streak"; "Best run: 12 days" only shows from 2 days up
   * encouraging, never discouraging: time read rounds down, time left rounds
     up, and a row with nothing to say drops out rather than scolding
 ]]
@@ -17,10 +17,6 @@ F.SEP = " · "
 F.CHAPTER_TITLE_MAX = 20
 F.LOW_BATTERY = 15
 F.SEGMENTS_MAX = 24 -- book goals up to this many draw one cell per book
-
-F.NOTE_IN = "Today is in the chain."
-F.NOTE_BEST = "Your longest run so far."
-F.NOTE_NEW = "One page starts a new run."
 
 F.FINISHED = "Finished"
 F.NO_BOOK_TITLE = "No book open"
@@ -143,22 +139,11 @@ function F.stepLine(step_opts, finished)
     return F.nextStep(step_opts or {})
 end
 
--- Streak guard: the run is alive but today isn't in it yet.
-function F.noteGuard(streak)
-    return "Read today to make it " .. (streak + 1) .. "."
-end
-
-function F.streakNote(streak, read_today, best)
-    if (streak or 0) == 0 then return F.NOTE_NEW end
-    if not read_today then return F.noteGuard(streak) end
-    if streak >= 2 and streak >= (best or 0) then return F.NOTE_BEST end
-    return F.NOTE_IN
-end
-
--- "Best run: 12", only while the best run is ahead of the current one.
+-- "Best run: 12 days", only while the best run is ahead of the current one.
+-- It needs at least 2 days, so "days" is always right.
 function F.bestLine(best, streak)
     if best and best >= 2 and best > (streak or 0) then
-        return "Best run: " .. best
+        return "Best run: " .. best .. " days"
     end
     return nil
 end
@@ -261,6 +246,16 @@ function F.yearLine(seconds, now)
     local m = math.floor((seconds or 0) / 60)
     local value = m < 60 and (m .. " min") or (math.floor(m / 60) .. " h")
     return { label = "Read in " .. os.date("%Y", now or os.time()), value = value }
+end
+
+-- The daily quote: its text in curly quotes, and who said it (and where).
+function F.quoteText(q)
+    return "“" .. q.text .. "”"
+end
+
+function F.quoteBy(q)
+    if q.source then return q.author .. F.SEP .. q.source end
+    return q.author
 end
 
 function F.monthName(t)
