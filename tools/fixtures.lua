@@ -26,7 +26,8 @@ end
 -- Goals as set in Bookshelf's Reading goal module: 45 min a day, 10 h a week,
 -- 2 books a month, 6 a year.
 local GOALS = { daily = 45, weekly = 600, monthly = 2, yearly = 6 }
-local COUNTS = { pages_today = 14, books_month = 1, books_year = 4 }
+-- 1 book finished this month and 4 this year, with Sharp Objects still being read.
+local COUNTS = { pages_today = 14, books = { month = { finished = 1, reading = 1 }, year = { finished = 4, reading = 1 } } }
 
 local function stats(days, goals, counts)
     return Data.statsModel(days, NOW, goals or GOALS, counts or COUNTS)
@@ -160,7 +161,7 @@ return function(cover)
         { "06-last-chapter", { header = header(), book = kafka(cover, { pct = 0.94, page = 104,
             step = { has_chapters = true, in_last_chapter = true, book_seconds = 360 } }), stats = s_default } },
         { "07-finished", { header = header(), book = kafka(cover, { pct = 1, page = 110, finished = true }),
-            stats = stats(read_today, GOALS, { pages_today = 22, books_month = 2, books_year = 5 }) } },
+            stats = stats(read_today, GOALS, { pages_today = 22, books = { month = { finished = 2, reading = 0 }, year = { finished = 5, reading = 0 } } }) } },
         { "08-no-chapters-far-date", { header = header(), book = book{
             title = "The Simplicity Shift", author = "Scott Jenson", pct = 0.2, page = 38, total = 188,
             step = { has_chapters = false, book_seconds = 40000 }, cover = cover("simplicity") },
@@ -192,7 +193,7 @@ return function(cover)
         { "19-daily-goal-done", { header = header(), book = kafka(cover), stats = stats(goal_done) } },
         { "20-no-goals-set", { header = header(), book = kafka(cover), stats = stats(history(), {}, { pages_today = 0 }) } },
         { "21-weekly-goal-met", { header = header(), book = sharp(cover), stats = stats(goal_done,
-            { daily = 45, weekly = 150, monthly = 2, yearly = 30 }, { pages_today = 31, books_month = 2, books_year = 31 }) } },
+            { daily = 45, weekly = 150, monthly = 2, yearly = 30 }, { pages_today = 31, books = { month = { finished = 2, reading = 1 }, year = { finished = 31, reading = 1 } } }) } },
         { "22-quiet-month", { header = header(), book = kafka(cover), stats = stats(quiet) } },
         { "23-streak-two", { header = header(), book = kafka(cover), stats = stats(seq({}, "2026-09-24", "m 600")) } },
         { "24-streak-twelve", { header = header(), book = kafka(cover), stats = stats(run({}, "2026-09-14", 12, 1500)) } },

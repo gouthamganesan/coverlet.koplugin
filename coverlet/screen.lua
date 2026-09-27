@@ -619,13 +619,15 @@ local function pair(bb, x, y, w, left, right, min_gap)
     return base + math.max(left.lh - left.base, right.lh - right.base)
 end
 
-local function meter(bb, x, y, w, h, px, fraction)
-    rect(bb, x, y, math.floor(w * math.max(0, math.min(1, fraction or 0))), h, INK)
+local function meter(bb, x, y, w, h, px, fraction, grey_to)
+    local clamp = function(f) return math.max(0, math.min(1, f or 0)) end
+    if grey_to then rect(bb, x, y, math.floor(w * clamp(grey_to)), h, GBB) end
+    rect(bb, x, y, math.floor(w * clamp(fraction)), h, INK)
     frame(bb, x, y, w, h, math.max(1, px(2)), G99)
 end
 
--- One cell per book, filled for each one finished.
-local function segments(bb, x, y, w, h, px, n, filled)
+-- One cell per book: black for each one finished, grey for each still being read.
+local function segments(bb, x, y, w, h, px, n, filled, reading)
     local gap = px(6)
     local cell = (w - gap * (n - 1)) / n
     for i = 1, n do
@@ -633,6 +635,8 @@ local function segments(bb, x, y, w, h, px, n, filled)
         local cw = math.floor(x + (i - 1) * (cell + gap) + cell) - cx
         if i <= filled then
             rect(bb, cx, y, cw, h, INK)
+        elseif i <= filled + (reading or 0) then
+            rect(bb, cx, y, cw, h, GBB)
         else
             frame(bb, cx, y, cw, h, math.max(1, px(2)), G99)
         end
@@ -681,9 +685,9 @@ function StreakScreen:goalsColumn(bb, x, y, w, px, goals, year)
         free(l, r)
         if bb then
             if g.segments then
-                segments(bb, x, cy, w, px(14), px, g.segments, g.filled)
+                segments(bb, x, cy, w, px(14), px, g.segments, g.filled, g.reading)
             else
-                meter(bb, x, cy, w, px(14), px, g.fraction)
+                meter(bb, x, cy, w, px(14), px, g.fraction, g.reading_fraction)
             end
         end
         cy = cy + px(14) + px(16)

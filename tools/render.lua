@@ -234,10 +234,35 @@ check(chain.week_seconds == 30 * 60 + 6 * 60, "sql-fed week, Monday to today", c
 check(chain.year_seconds == 30 * 60 + 50 + 10 * 45 + 6 * 60, "sql-fed year total", chain.year_seconds)
 check(C.goalStreak(days, now, 5 * 60) == 6, "sql-fed goal day streak", C.goalStreak(days, now, 5 * 60))
 local year_start = C.startOfYear(now)
-check(Data.booksFinishedSince(db_path, year_start) == 1, "sql finished this year", Data.booksFinishedSince(db_path, year_start))
-check(Data.booksFinishedSince(db_path, C.startOfMonth(now)) == 1, "sql finished this month",
-    Data.booksFinishedSince(db_path, C.startOfMonth(now)))
-check(Data.booksFinishedSince(db_path, now) == 0, "sql finished since now is none")
+-- Books for the goals, the way Bookshelf counts them: from the reading
+-- history and each book's sidecar, by when it was last opened.
+do
+    local DocSettings = require("docsettings")
+    local function book(name, status, pct)
+        local file = out_dir .. "/" .. name .. ".epub"
+        local f = io.open(file, "w"); f:write("x"); f:close()
+        local ds = DocSettings:open(file)
+        if status then ds:saveSetting("summary", { status = status }) end
+        if pct then ds:saveSetting("percent_finished", pct) end
+        ds:flush()
+        return file
+    end
+    local history = {
+        { file = book("finished-this-month", "complete", 1), time = now - 3 * 86400 },
+        { file = book("reading-now", "reading", 0.72), time = now - 3600 },
+        { file = book("started-no-status", nil, 0.1), time = now - 5 * 86400 },
+        { file = book("on-hold", "abandoned", 0.4), time = now - 2 * 86400 },
+        { file = book("finished-in-march", "complete", 1), time = os.time{ year = 2026, month = 3, day = 10, hour = 12 } },
+        { file = book("reading-in-june", "reading", 0.3), time = os.time{ year = 2026, month = 6, day = 2, hour = 12 } },
+        { file = book("finished-last-year", "complete", 1), time = os.time{ year = 2025, month = 12, day = 20, hour = 12 } },
+        { file = book("never-read", nil, nil), time = now - 86400 },
+    }
+    local bc = Data.bookCounts(now, history)
+    check(bc.month.finished == 1 and bc.year.finished == 2, "only finished books count toward the goals",
+        bc.month.finished .. "/" .. bc.year.finished)
+    check(bc.month.reading == 2 and bc.year.reading == 3, "books still being read are counted apart",
+        bc.month.reading .. "/" .. bc.year.reading)
+end
 local pages = Data.pagesSince(db_path, C.startOfDay(now))
 check(pages == 5, "sql pages today, each page once", pages)
 check(Data.pagesSince(db_path, now + 86400) == 0, "sql no pages tomorrow")
@@ -288,7 +313,8 @@ check(goals.weekly == 600 and goals.monthly == nil and goals.yearly == nil, "mon
 check(goals.daily == 30, "an unset daily goal takes Bookshelf's default", goals.daily)
 writeGoals({ micromodule_reading_goal_active = { daily = false, weekly = true, monthly = true, yearly = false } })
 goals = Data.goals()
-check(goals.weekly == nil and goals.monthly == nil, "weekly and monthly switched on but unset drop out")
+check(goals.weekly == 300 and goals.monthly == 3, "weekly and monthly switched on but unset take Bookshelf's defaults",
+    tostring(goals.weekly) .. "/" .. tostring(goals.monthly))
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6 })
 
 -- ------------------------------ 3. sleep-screen hook through core, end to end ---

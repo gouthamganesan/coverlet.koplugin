@@ -135,7 +135,8 @@ eq(#t.rows, 2, "today without a goal: yesterday and pages")
 eq(#F.today(1320, 45, nil, 0, 0).rows, 2, "today drops pages it couldn't count")
 
 -- -------------------------------------------------------------- goals ---
-local rows = F.goalRows{ now = fri, weekly = 600, week_seconds = 11239, monthly = 2, books_month = 1, yearly = 6, books_year = 4 }
+local rows = F.goalRows{ now = fri, weekly = 600, week_seconds = 11239,
+    monthly = 2, month = { finished = 1, reading = 0 }, yearly = 6, year = { finished = 4, reading = 0 } }
 eq(#rows, 3, "goal rows, all on")
 eq(rows[1].label .. " | " .. rows[1].value, "This week | 3 h 07 of 10 h", "goal week")
 eq(math.abs(rows[1].fraction - 11239 / 36000) < 1e-9, true, "goal week fraction")
@@ -145,10 +146,17 @@ eq(rows[3].label .. " | " .. rows[3].value .. " | " .. rows[3].segments .. " " .
 rows = F.goalRows{ now = fri, weekly = 150, week_seconds = 10320 }
 eq(#rows, 1, "goal rows, weekly only")
 eq(rows[1].value .. " " .. rows[1].fraction, "2 h 52 of 2 h 30 1", "goal week met")
-rows = F.goalRows{ now = fri, monthly = 1, books_month = 0, yearly = 52, books_year = 60 }
+rows = F.goalRows{ now = fri, monthly = 1, month = { finished = 0, reading = 0 }, yearly = 52, year = { finished = 60, reading = 0 } }
 eq(rows[1].value, "0 of 1 book", "goal one book")
 eq(rows[2].value .. " | " .. tostring(rows[2].segments) .. " " .. rows[2].fraction, "60 of 52 books | nil 1", "goal many books is one bar")
 eq(#F.goalRows{ now = fri }, 0, "no goals, no rows")
+rows = F.goalRows{ now = fri, monthly = 2, month = { finished = 1, reading = 1 }, yearly = 6, year = { finished = 4, reading = 3 } }
+eq(rows[1].value .. " | " .. rows[1].filled .. " " .. rows[1].reading, "1 of 2 books | 1 1", "a book being read is grey, not counted")
+eq(rows[2].value .. " | " .. rows[2].filled .. " " .. rows[2].reading, "4 of 6 books | 4 2", "grey cells stop at the goal")
+eq(rows[2].fraction .. " " .. rows[2].reading_fraction, (4 / 6) .. " 1", "the bar's grey runs past the black")
+rows = F.goalRows{ now = fri, monthly = 2, month = { finished = 3, reading = 2 } }
+eq(rows[1].filled .. " " .. rows[1].reading, "2 0", "a met goal has no room for grey")
+eq(F.goalRows{ now = fri, yearly = 6 }[1].value, "0 of 6 books", "no counts reads as none yet")
 local yl = F.yearLine(310000, fri)
 eq(yl.label .. " | " .. yl.value, "Read in 2026 | 86 h", "year hours")
 eq(F.yearLine(2700, fri).value, "45 min", "year under an hour")

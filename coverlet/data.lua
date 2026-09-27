@@ -90,16 +90,42 @@ function Data.readDays(path)
 end
 
 -- A book counts as finished the first time a page at 99% or later was read.
-function Data.booksFinishedSince(path, since)
-    return withDB(path, function(conn)
-        local n = conn:rowexec(string.format([[
-            SELECT count(*) FROM (
-                SELECT id_book, min(start_time) AS t FROM page_stat_data
-                WHERE total_pages > 0 AND page * 100 >= total_pages * 99
-                GROUP BY id_book
-            ) WHERE t >= %d;]], since))
-        return tonumber(n) or 0
-    end) or 0
+--[[
+Books for the monthly and yearly goals, counted the way Bookshelf's Reading
+goal counts them, so the two never disagree: a book in the reading history
+that was last opened in the period and is marked finished. Books still being
+read in the period are counted too, for the goal's grey cells.
+  -> { month = { finished, reading }, year = { finished, reading } }
+]]
+function Data.bookCounts(now, history)
+    if not history then
+        local ok, rh = pcall(require, "readhistory")
+        history = ok and rh and rh.hist or {}
+    end
+    local month_start, year_start = Chain.startOfMonth(now), Chain.startOfYear(now)
+    local counts = { month = { finished = 0, reading = 0 }, year = { finished = 0, reading = 0 } }
+    for _, entry in ipairs(history) do
+        local t = entry.time or 0
+        if entry.file and t >= year_start then
+            local ok, ds = pcall(DocSettings.open, DocSettings, entry.file)
+            if ok and ds then
+                local summary = ds:readSetting("summary")
+                local status = type(summary) == "table" and summary.status or nil
+                local pct = tonumber(ds:readSetting("percent_finished"))
+                local kind
+                if status == "complete" or status == "finished" then
+                    kind = "finished"
+                elseif status ~= "abandoned" and pct and pct > 0 and pct < 1 then
+                    kind = "reading"
+                end
+                if kind then
+                    counts.year[kind] = counts.year[kind] + 1
+                    if t >= month_start then counts.month[kind] = counts.month[kind] + 1 end
+                end
+            end
+        end
+    end
+    return counts
 end
 
 -- Pages read since a time, counted the way KOReader's own "Today" statistics
@@ -155,7 +181,8 @@ loaded, else from its file. Daily and yearly fall back to Bookshelf's defaults;
 weekly and monthly only count once a value is set.
 Returns { daily, weekly, monthly, yearly }, each nil when off.
 ]]
-local BOOKSHELF_DEFAULTS = { daily = 30, yearly = 24 }
+-- Bookshelf's own defaults, for a goal that is on but was never set.
+local BOOKSHELF_DEFAULTS = { daily = 30, weekly = 300, monthly = 3, yearly = 24 }
 
 function Data.goals()
     local read
@@ -186,7 +213,7 @@ end
 --[[
 The stats half of the model, from the day map and the counts only the
 database has. Pure: tools/fixtures.lua builds its states through it too.
-  counts = { pages_today, books_month, books_year }
+  counts = { pages_today, books = Data.bookCounts() }
 ]]
 function Data.statsModel(days, now, goals, counts)
     goals, counts = goals or {}, counts or {}
@@ -204,8 +231,8 @@ function Data.statsModel(days, now, goals, counts)
         goals = Format.goalRows{
             now = now,
             weekly = goals.weekly, week_seconds = c.week_seconds,
-            monthly = goals.monthly, books_month = counts.books_month,
-            yearly = goals.yearly, books_year = counts.books_year,
+            monthly = goals.monthly, month = counts.books and counts.books.month,
+            yearly = goals.yearly, year = counts.books and counts.books.year,
         },
         year = Format.yearLine(c.year_seconds, now),
         streak = c.streak,
@@ -397,8 +424,7 @@ local function readerStats(now)
     local goals = Data.goals()
     return Data.statsModel(days, now, goals, {
         pages_today = Data.pagesSince(nil, Chain.startOfDay(now)),
-        books_month = goals.monthly and Data.booksFinishedSince(nil, Chain.startOfMonth(now)) or nil,
-        books_year = goals.yearly and Data.booksFinishedSince(nil, Chain.startOfYear(now)) or nil,
+        books = (goals.monthly or goals.yearly) and Data.bookCounts(now) or nil,
     })
 end
 

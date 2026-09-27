@@ -256,22 +256,28 @@ function F.today(today_seconds, goal_minutes, pages, goal_streak, yesterday_seco
     return t
 end
 
-local function bookGoal(label, books, goal)
-    books = books or 0
+-- Only finished books fill the goal; books still being read show after them
+-- in grey, as far as the goal has room.
+local function bookGoal(label, counts, goal)
+    local books = counts and counts.finished or 0
+    local filled = math.min(books, goal)
+    local reading = math.max(0, math.min(counts and counts.reading or 0, goal - filled))
     return {
         label = label,
         value = books .. " of " .. goal .. (goal == 1 and " book" or " books"),
         fraction = math.min(1, books / goal),
+        reading_fraction = math.min(1, (filled + reading) / goal),
         segments = goal <= F.SEGMENTS_MAX and goal or nil,
-        filled = math.min(books, goal),
+        filled = filled,
+        reading = reading,
     }
 end
 
 --[[
 The Goals column: a row for each of Bookshelf's goals that is on.
-  o = { now, weekly (minutes), week_seconds, monthly (books), books_month,
-        yearly (books), books_year }
-  -> { { label, value, fraction, segments = n | nil, filled }, ... }
+  o = { now, weekly (minutes), week_seconds, monthly (books), month = { finished, reading },
+        yearly (books), year = { finished, reading } }
+  -> { { label, value, fraction, reading_fraction, segments = n | nil, filled, reading }, ... }
 ]]
 function F.goalRows(o)
     local now = o.now or os.time()
@@ -283,8 +289,8 @@ function F.goalRows(o)
             fraction = math.min(1, (o.week_seconds or 0) / (o.weekly * 60)),
         })
     end
-    if o.monthly then table.insert(rows, bookGoal(os.date("%B", now), o.books_month, o.monthly)) end
-    if o.yearly then table.insert(rows, bookGoal(os.date("%Y", now), o.books_year, o.yearly)) end
+    if o.monthly then table.insert(rows, bookGoal(os.date("%B", now), o.month, o.monthly)) end
+    if o.yearly then table.insert(rows, bookGoal(os.date("%Y", now), o.year, o.yearly)) end
     return rows
 end
 
