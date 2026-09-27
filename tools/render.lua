@@ -62,14 +62,36 @@ local function loadCover(name)
     return RenderImage:renderImageFile(path, false)
 end
 
+-- Every block the screen drew stays on the screen and clear of the others,
+-- and no row ran into its own value.
+local function layoutProblems(layout, w, h)
+    local problems = {}
+    for _, what in ipairs(layout.clashes) do table.insert(problems, what) end
+    local boxes = layout.boxes
+    for i, a in ipairs(boxes) do
+        if a.x < 0 or a.y < 0 or a.x + a.w > w or a.y + a.h > h then
+            table.insert(problems, a.name .. " off the screen")
+        end
+        for j = i + 1, #boxes do
+            local b = boxes[j]
+            if a.x < b.x + b.w and b.x < a.x + a.w and a.y < b.y + b.h and b.y < a.y + a.h then
+                table.insert(problems, a.name .. " overlaps " .. b.name)
+            end
+        end
+    end
+    return problems
+end
+
 local states = require("tools/fixtures")(loadCover)
 for _, s in ipairs(states) do
     local name, model, w, h = s[1], s[2], s[3] or 1264, s[4] or 1680
     local before = #warned
-    local ok, err = pcall(function()
-        png(StreakScreen:new{ model = model, width = w, height = h }, name, w, h)
-    end)
+    local widget = StreakScreen:new{ model = model, width = w, height = h }
+    local ok, err = pcall(function() png(widget, name, w, h) end)
     check(ok and #warned == before, "render " .. name, err or warned[#warned])
+    local problems = widget.layout and layoutProblems(widget.layout, w, h) or { "no layout recorded" }
+    check(#problems == 0, name .. ": nothing overlaps or spills (" .. (widget.layout and #widget.layout.boxes or 0) .. " blocks)",
+        table.concat(problems, "; "))
     -- The cover must keep its own pixels whenever it fits: never enlarged,
     -- never reshaped, only shrunk when the screen has no room.
     local b = model.book
@@ -78,7 +100,8 @@ for _, s in ipairs(states) do
         check(dw <= b.cover_w and dh <= b.cover_h, name .. ": cover never enlarged", dw .. "x" .. dh)
         check(math.abs(dw / dh - b.cover_w / b.cover_h) < 0.01, name .. ": cover keeps its proportions", dw .. "x" .. dh)
         if name == "18-many-chapters" then
-            check(dw == b.cover_w and dh == b.cover_h, name .. ": Sharp Objects cover drawn at its own 500x667",
+            -- 7b draws covers 420 px tall: the 500x667 cover shrinks to fit, evenly.
+            check(dh == 420 and dw == math.floor(500 * 420 / 667), name .. ": Sharp Objects cover shrunk to 7b's 420 px",
                 dw .. "x" .. dh)
         end
     end
@@ -146,18 +169,22 @@ check(secs(6) == 50, "sql late-night page lands on its own day", secs(6))
 check(secs(0) == 6 * 60, "sql today's total", secs(0))
 local chain = C.compute(days, now)
 check(chain.streak == 7, "sql-fed streak", chain.streak)
-local year_start = os.time{ year = 2026, month = 1, day = 1, hour = 0 }
-local month_start = os.time{ year = 2026, month = 9, day = 1, hour = 0 }
-local day_start = os.time{ year = 2026, month = 9, day = 25, hour = 0 }
+check(chain.week_seconds == 30 * 60 + 6 * 60, "sql-fed week, Monday to today", chain.week_seconds)
+check(chain.year_seconds == 30 * 60 + 50 + 10 * 45 + 6 * 60, "sql-fed year total", chain.year_seconds)
+check(C.goalStreak(days, now, 5 * 60) == 6, "sql-fed goal day streak", C.goalStreak(days, now, 5 * 60))
+local year_start = C.startOfYear(now)
 check(Data.booksFinishedSince(db_path, year_start) == 1, "sql finished this year", Data.booksFinishedSince(db_path, year_start))
-check(Data.booksFinishedSince(db_path, month_start) == 1, "sql finished this month", Data.booksFinishedSince(db_path, month_start))
+check(Data.booksFinishedSince(db_path, C.startOfMonth(now)) == 1, "sql finished this month",
+    Data.booksFinishedSince(db_path, C.startOfMonth(now)))
 check(Data.booksFinishedSince(db_path, now) == 0, "sql finished since now is none")
-local pages = Data.pagesSince(db_path, day_start)
+local pages = Data.pagesSince(db_path, C.startOfDay(now))
 check(pages == 5, "sql pages today, each page once", pages)
 check(Data.pagesSince(db_path, now + 86400) == 0, "sql no pages tomorrow")
 local spent = Data.bookTime(db_path, "aaa")
 check(spent and spent.seconds == 30 * 60 + 50, "sql time in one book", spent and spent.seconds)
 check(spent and spent.first == at(6, 23) + 30 * 60, "sql the book's first page", spent and spent.first)
+check(spent and require("streakchain/format").bookSoFar(spent.seconds, spent.first, now) == "30 min in, since 19 Sep",
+    "sql time in the book reads right", spent and require("streakchain/format").bookSoFar(spent.seconds, spent.first, now))
 check(Data.bookTime(db_path, "zzz") == nil, "sql unknown book has no time")
 local pace = Data.bookPace(db_path, "aaa")
 -- 30 pages at 60 s plus the late-night page at 50 s
@@ -237,7 +264,8 @@ check(ssw ~= nil, "a sleep screen widget is shown")
 local ours = ssw and ssw.widget
 check(ours and ours.model and ours.model.stats ~= nil, "hook built a model with stats from the database")
 check(ours and ours.model and ours.model.book == nil, "no last file means the no-book layout")
-check(ours and ours.model.stats.goal_minutes == 45, "hook uses Bookshelf's daily goal")
+check(ours and ours.model.stats.today.rows[1][2]:match(" of 45 min$") ~= nil, "hook uses Bookshelf's daily goal",
+    ours and ours.model.stats.today.rows[1][2])
 if ours then
     local W, H = require("device").screen:getWidth(), require("device").screen:getHeight()
     png(ours, "hook-end-to-end", W, H)
@@ -245,6 +273,34 @@ if ours then
 end
 require("ui/uimanager"):close(ssw)
 Screensaver:cleanup()
+
+-- The flame: every variant draws from its SVG at every size, and the core
+-- really is a hole in the solid flame.
+local function inked(variant, w, h)
+    local bb = Blitbuffer.new(w + 4, h + 4, Blitbuffer.TYPE_BB8)
+    bb:fill(Blitbuffer.COLOR_WHITE)
+    local ok = StreakScreen:paintFlame(bb, 2, 2, w, h, variant)
+    local n = 0
+    for y = 0, h + 3 do
+        for x = 0, w + 3 do
+            if bb:getPixel(x, y):getColor8().a < 0xE0 then n = n + 1 end
+        end
+    end
+    bb:free()
+    return ok, n
+end
+for _, size in ipairs({ "small", "medium", "large" }) do
+    local dims = C.FLAME[size]
+    local counts = {}
+    for _, variant in ipairs({ "dashed", "outline", "solid", "core" }) do
+        local ok_f, n = inked(variant, dims.w, dims.h)
+        counts[variant] = n
+        check(ok_f and n > dims.w, "flame " .. variant .. " draws at " .. size, n)
+    end
+    check(counts.core < counts.solid and counts.outline < counts.solid and counts.dashed < counts.outline,
+        "flame " .. size .. ": core, outline and dashed are lighter than solid",
+        counts.solid .. " " .. counts.core .. " " .. counts.outline .. " " .. counts.dashed)
+end
 
 -- The fallback: a model that makes drawing fail must still paint something.
 local bad = StreakScreen:new{ model = { book = { title = "x", ticks = "not a table" }, header = {} }, width = 1264, height = 1680 }

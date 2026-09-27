@@ -44,12 +44,13 @@ eq(F.left(30), "1 min", "left under a minute")
 eq(F.left(61), "2 min", "left rounds up")
 eq(F.left(660), "11 min", "left minutes")
 eq(F.left(3900), "1 h 05 min", "left over an hour")
-eq(F.total(0), "0 min", "total zero")
-eq(F.total(2700), "45 min", "total minutes")
-eq(F.total(7200), "2 h 00 min", "total hours")
-eq(F.total(4020), "1 h 07 min", "total rounds down")
-eq(F.percent(0.58), "58%", "percent")
-eq(F.percent(0.996), "99%", "percent never rounds up to 100")
+eq(F.spent(0), "0 min", "spent zero")
+eq(F.spent(2700), "45 min", "spent minutes")
+eq(F.spent(7200), "2 h 00", "spent hours")
+eq(F.spent(11239), "3 h 07", "spent rounds down")
+eq(F.goalHours(600), "10 h", "goal whole hours")
+eq(F.goalHours(150), "2 h 30", "goal hours and minutes")
+eq(F.goalHours(45), "45 min", "goal under an hour")
 
 -- --------------------------------------------------------- next step ---
 local base = { has_chapters = true, chapter_title = "Part II", chapter_seconds = 660, book_seconds = 2280 }
@@ -63,16 +64,10 @@ eq(F.nextStep({ has_chapters = true, chapter_title = "Part II", chapter_pages = 
 eq(F.nextStep({ has_chapters = true, chapter_title = "Part II", chapter_pages = 1 }), "1 page left in Part II", "step one page")
 eq(F.nextStep({ finished = true, book_seconds = 60 }), nil, "step finished")
 eq(F.nextStep({ has_chapters = true, chapter_title = "Part II", generic = true, chapter_seconds = 660 }), "11 min left in this chapter", "step generic")
-
-local variants = F.metaVariants("Franz Kafka", 0.58, base, false)
-eq(variants[1], "Franz Kafka · 58% · 11 min left in Part II", "meta full")
-eq(variants[2], "Franz Kafka · 58% · 11 min left in this chapter", "meta generic")
-eq(variants[3], "58% · 11 min left in this chapter", "meta without author")
-eq(F.metaVariants("Franz Kafka", 1, base, true)[1], "Franz Kafka · finished", "meta finished")
-eq(F.metaVariants(nil, 0.58, base, false)[1], "58% · 11 min left in Part II", "meta no author")
-eq(F.progressLine(0.69, { has_chapters = true, chapter_title = "Chapter Thirteen", chapter_seconds = 1320 }, false),
-    "69% · 22 min left in Chapter Thirteen", "progress line keeps the chapter name")
-eq(F.progressLine(1, base, true), "finished", "progress line finished")
+eq(F.stepLine({ has_chapters = true, chapter_title = "Chapter Thirteen", chapter_seconds = 1320 }, false),
+    "22 min left in Chapter Thirteen", "step line keeps the chapter name")
+eq(F.stepLine(base, true), "Finished", "step line finished")
+eq(F.stepLine({}, false), nil, "step line with nothing to say")
 
 -- -------------------------------------------------------- streak note ---
 eq(F.streakNote(0, false, 12), F.NOTE_NEW, "note no run")
@@ -81,13 +76,9 @@ eq(F.streakNote(5, true, 12), F.NOTE_IN, "note today read")
 eq(F.streakNote(31, true, 31), F.NOTE_BEST, "note longest")
 eq(F.streakNote(1, true, 1), F.NOTE_IN, "note first day is not a record")
 eq(F.streakNote(4, false, 4), "Read today to make it 5.", "note guard wins over record")
-
--- --------------------------------------------------------- stats line ---
-eq(F.statsLine(12, 4, 7200, 14, 24), "Best run: 12 days · 2 h 00 min this week · 14 of 24 books", "stats default")
-eq(F.statsLine(31, 31, 13200, 14, 24), "3 h 40 min this week · 14 of 24 books", "stats best hidden when current")
-eq(F.statsLine(1, 0, 0, 0, nil), "0 min this week · 0 finished this year", "stats best hidden under 2")
-eq(F.statsLine(12, 4, 2700, 14, nil), "Best run: 12 days · 45 min this week · 14 finished this year", "stats no goal")
-eq(F.statsLine(12, 4, 7200, 26, 24), "Best run: 12 days · 2 h 00 min this week · 26 of 24 books", "stats goal passed")
+eq(F.bestLine(12, 4), "Best run: 12", "best line")
+eq(F.bestLine(4, 4), nil, "best line hidden when current")
+eq(F.bestLine(1, 0), nil, "best line hidden under 2")
 
 -- ------------------------------------------------------------- header ---
 local fri = os.time{ year = 2026, month = 9, day = 25, hour = 21 }
@@ -98,8 +89,69 @@ eq(F.batteryWarning(16, false), nil, "battery fine")
 eq(F.batteryWarning(8, true), nil, "battery charging")
 eq(F.batteryWarning(0, false), nil, "battery unreadable")
 
+-- --------------------------------------------------------------- hero ---
+local a, b = F.heroTime(2280)
+eq(a .. " " .. b, "38 min to the end", "hero minutes")
+a, b = F.heroTime(9600)
+eq(a .. " " .. b, "2 h 40 to the end", "hero hours")
+a, b = F.heroTime(3600)
+eq(a .. " " .. b, "1 h 00 to the end", "hero exactly an hour")
+a, b = F.heroTime(20)
+eq(a, "1", "hero never below 1 min")
+a, b = F.heroPages(64, 110)
+eq(a .. " " .. b, "64 of 110 pages", "hero pages")
+
+-- --------------------------------------------------- time in the book ---
+local sep12 = os.time{ year = 2026, month = 9, day = 12, hour = 20 }
+eq(F.bookSoFar(24000, sep12, fri), "6 h 40 in, since 12 Sep", "so far hours")
+eq(F.bookSoFar(2400, sep12, fri), "40 min in, since 12 Sep", "so far minutes")
+eq(F.bookSoFar(600, fri - 3600, fri), "10 min in, started today", "so far started today")
+eq(F.bookSoFar(30, fri - 600, fri), "Started today", "so far under a minute")
+eq(F.bookSoFar(90000, os.time{ year = 2025, month = 12, day = 30, hour = 20 }, fri), "25 h 00 in, since 30 Dec 2025",
+    "so far from last year")
+eq(F.bookSoFar(600, nil, fri), nil, "so far without a start")
+
+-- -------------------------------------------------------------- today ---
+local t = F.today(720, 45, 14, 3)
+eq(t.num .. " " .. t.unit, "33 min to today’s goal", "today partway")
+eq(math.abs(t.fraction - 12 / 45) < 1e-9, true, "today fraction")
+eq(#t.rows, 3, "today rows")
+eq(t.rows[1][1] .. " | " .. t.rows[1][2], "Read | 12 of 45 min", "today read row")
+eq(t.rows[2][1] .. " | " .. t.rows[2][2], "Pages today | 14", "today pages row")
+eq(t.rows[3][1] .. " | " .. t.rows[3][2], "Goal day streak | 3", "today goal streak row")
+t = F.today(0, 45, 0, 0)
+eq(t.num .. " | " .. t.rows[1][2], "45 | 0 of 45 min", "today not started")
+t = F.today(3120, 45, 30, 4)
+eq(t.num .. " " .. t.unit .. " | " .. t.rows[1][1] .. " " .. t.rows[1][2], "52 min today | Daily goal Done", "today goal done")
+eq(t.fraction, 1, "today goal done is full")
+eq(tostring(F.today(2700, 45, 1, 1).done), "true", "today goal exactly met")
+t = F.today(1320, nil, 9, nil)
+eq(t.num .. " " .. t.unit, "22 min today", "today without a goal")
+eq(t.fraction, nil, "today without a goal has no bar")
+eq(#t.rows, 1, "today without a goal: pages only")
+eq(#F.today(1320, 45, nil, 0).rows, 2, "today drops pages it couldn't count")
+
+-- -------------------------------------------------------------- goals ---
+local rows = F.goalRows{ now = fri, weekly = 600, week_seconds = 11239, monthly = 2, books_month = 1, yearly = 6, books_year = 4 }
+eq(#rows, 3, "goal rows, all on")
+eq(rows[1].label .. " | " .. rows[1].value, "This week | 3 h 07 of 10 h", "goal week")
+eq(math.abs(rows[1].fraction - 11239 / 36000) < 1e-9, true, "goal week fraction")
+eq(rows[1].segments, nil, "goal week is one bar")
+eq(rows[2].label .. " | " .. rows[2].value .. " | " .. rows[2].segments .. " " .. rows[2].filled, "September | 1 of 2 books | 2 1", "goal month")
+eq(rows[3].label .. " | " .. rows[3].value .. " | " .. rows[3].segments .. " " .. rows[3].filled, "2026 | 4 of 6 books | 6 4", "goal year")
+rows = F.goalRows{ now = fri, weekly = 150, week_seconds = 10320 }
+eq(#rows, 1, "goal rows, weekly only")
+eq(rows[1].value .. " " .. rows[1].fraction, "2 h 52 of 2 h 30 1", "goal week met")
+rows = F.goalRows{ now = fri, monthly = 1, books_month = 0, yearly = 52, books_year = 60 }
+eq(rows[1].value, "0 of 1 book", "goal one book")
+eq(rows[2].value .. " | " .. tostring(rows[2].segments) .. " " .. rows[2].fraction, "60 of 52 books | nil 1", "goal many books is one bar")
+eq(#F.goalRows{ now = fri }, 0, "no goals, no rows")
+local yl = F.yearLine(310000, fri)
+eq(yl.label .. " | " .. yl.value, "Read in 2026 | 86 h", "year hours")
+eq(F.yearLine(2700, fri).value, "45 min", "year under an hour")
+
 -- -------------------------------------------------------------- chain ---
--- Friday 25 September 2026; the grid starts Monday 31 August.
+-- Friday 25 September 2026.
 local function build(map)
     local days = {}
     local secs = { l = 900, m = 1800, h = 2700 }
@@ -107,19 +159,18 @@ local function build(map)
     return days
 end
 local function seq(start_key, codes)
-    local out, t = {}, C.keyToTime(start_key)
+    local out, tt = {}, C.keyToTime(start_key)
     for code in codes:gmatch("%S+") do
-        if code ~= "x" then out[C.key(t)] = code end
-        t = C.addDays(t, 1)
+        if code ~= "x" then out[C.key(tt)] = code end
+        tt = C.addDays(tt, 1)
     end
     return out
 end
 local function merge(...)
     local out = {}
-    for _, t in ipairs({ ... }) do for k, v in pairs(t) do out[k] = v end end
+    for _, m in ipairs({ ... }) do for k, v in pairs(m) do out[k] = v end end
     return out
 end
-local function codes(cells) return table.concat(cells, " ") end
 
 local history = merge(
     seq("2026-08-01", "m m m m m m m m m m m m"), -- a 12-day run in early August
@@ -129,34 +180,31 @@ eq(r.streak, 4, "chain default streak")
 eq(r.best, 12, "chain default best")
 eq(r.read_today, false, "chain default not read")
 eq(r.week_seconds, 7200, "chain default week")
-eq(codes(r.cells), "m m x l h h m x x m l h h x l m x m m m x m h l m te f f", "chain default cells")
+eq(r.today_seconds, 0, "chain today seconds")
+eq(r.year_seconds, 22 * 1800 + 4 * 900 + 5 * 2700, "chain year total")
 
 local read = merge(history, { ["2026-09-25"] = 1320 })
 r = C.compute(build(read), fri)
 eq(r.streak, 5, "chain read streak")
-eq(r.cells[26], "tm", "chain today read cell")
 eq(r.week_seconds, 7200 + 1320, "chain read week")
 
 local broken = merge(seq("2026-08-31", "m m x l h h m  x x m l h h x  l m x m m m x  m h"))
 r = C.compute(build(broken), fri)
 eq(r.streak, 0, "chain broken streak")
-eq(codes(r.cells), "m m x l h h m x x m l h h x l m x m m m x m h x x te f f", "chain broken cells")
 
 r = C.compute(build(seq("2026-09-22", "l 1320 m")), fri)
 eq(r.streak, 3, "chain first days streak")
 eq(r.best, 3, "chain first days best")
 eq(r.week_seconds, 900 + 1320 + 1800, "chain first days week")
-eq(codes(r.cells), "n n n n n n n n n n n n n n n n n n n n n n l m m te f f", "chain first days cells")
 
 r = C.compute({}, fri)
 eq(r.streak, 0, "chain empty streak")
 eq(r.best, 0, "chain empty best")
-eq(r.cells[26], "te", "chain empty today")
-eq(r.cells[1], "n", "chain empty past")
+eq(r.year_seconds, 0, "chain empty year")
 
 local run31 = {}
-local t = C.keyToTime("2026-08-26")
-for _ = 1, 31 do run31[C.key(t)] = 2700; t = C.addDays(t, 1) end
+local tt = C.keyToTime("2026-08-26")
+for _ = 1, 31 do run31[C.key(tt)] = 2700; tt = C.addDays(tt, 1) end
 r = C.compute(run31, fri)
 eq(r.streak, 31, "chain long streak")
 eq(r.best, 31, "chain long best")
@@ -166,90 +214,79 @@ eq(F.streakNote(r.streak, r.read_today, r.best), F.NOTE_BEST, "chain long note")
 local ny = os.time{ year = 2027, month = 1, day = 1, hour = 9 }
 r = C.compute(build(seq("2026-12-30", "m m m")), ny)
 eq(r.streak, 3, "chain across new year")
+eq(r.year_seconds, 1800, "year total starts again on 1 January")
 eq(C.weekdayIndex(ny), 4, "1 Jan 2027 is a Friday")
+eq(r.week_seconds, 3 * 1800, "week runs across the new year from Monday")
 
--- ------------------------------------------------- hero and forecast ---
-local a, b = F.heroTime(2280)
-eq(a .. " " .. b, "38 min to the end", "hero minutes")
-a, b = F.heroTime(24000)
-eq(a .. " " .. b, "6 h 40 min to the end", "hero hours")
-a, b = F.heroTime(20)
-eq(a, "1", "hero never below 1 min")
-a, b = F.heroPages(64, 110)
-eq(a .. " " .. b, "64 of 110 pages", "hero pages")
+-- Period starts.
+eq(os.date("%Y-%m-%d %H:%M", C.startOfDay(fri)), "2026-09-25 00:00", "start of day")
+eq(os.date("%Y-%m-%d %H:%M", C.startOfWeek(fri)), "2026-09-21 00:00", "week starts Monday")
+eq(os.date("%Y-%m-%d", C.startOfWeek(os.time{ year = 2026, month = 9, day = 27, hour = 23 })), "2026-09-21", "Sunday is the week's last day")
+eq(os.date("%Y-%m-%d", C.startOfWeek(os.time{ year = 2026, month = 9, day = 21, hour = 1 })), "2026-09-21", "Monday starts its own week")
+eq(os.date("%Y-%m-%d %H:%M", C.startOfMonth(fri)), "2026-09-01 00:00", "start of month")
+eq(os.date("%Y-%m-%d %H:%M", C.startOfYear(fri)), "2026-01-01 00:00", "start of year")
 
--- Without a daily goal: plain dates.
-local fc = F.forecast(2280, 0, 1860, fri)
-eq(fc.line, "Done by Saturday.", "forecast next day")
-eq(fc.label, "SAT", "forecast label weekday")
-eq(math.abs(fc.today_share - 1860 / 2280) < 1e-9, true, "forecast today share")
-fc = F.forecast(2280, 0, 3000, fri)
-eq(fc.line, "Done today.", "forecast today")
-eq(fc.label, nil, "forecast today has no label")
-eq(fc.today_share, 1, "forecast today covers the rest")
-fc = F.forecast(2280, 2000, 1860, fri)
-eq(fc.line, "Done by Sunday.", "forecast after today's session is used up")
-eq(fc.today_share, 0, "forecast nothing left for today")
-fc = F.forecast(40000, 0, 1800, fri)
-eq(fc.line, "Done by 17 October.", "forecast date past six days")
-eq(fc.label, "17 OCT", "forecast label date")
-fc = F.forecast(1860 + 6 * 1860, 0, 1860, fri)
-eq(fc.line, "Done by Thursday.", "forecast six days out is still a weekday")
-eq(F.forecast(2280, 0, nil, fri), nil, "forecast needs a daily session")
-eq(F.forecast(0, 0, 1860, fri), nil, "forecast needs time left")
--- With a daily goal: the goal carries the line.
-fc = F.forecast(8040, 0, 2700, fri, 45)
-eq(fc.line, "45 min a day finishes it Sunday.", "forecast with goal")
-fc = F.forecast(2280, 0, 2700, fri, 45)
-eq(fc.line, "Today’s goal finishes it.", "forecast with goal, today")
-fc = F.forecast(2280, 2700, 2700, fri, 45)
-eq(fc.line, "45 min a day finishes it Saturday.", "forecast with goal already met today")
-for _, line in ipairs({ F.forecast(2280, 0, 1860, fri).line, F.forecast(8040, 0, 2700, fri, 45).line }) do
-    eq(line:find("pace") == nil, true, "forecast never mentions pace: " .. line)
+-- ------------------------------------------------------ goal day streak ---
+local goal = 45 * 60
+local gdays = build(seq("2026-09-19", "h h l h h h"))
+eq(C.goalStreak(gdays, fri, goal), 3, "goal streak through yesterday, today not met yet")
+eq(C.goalStreak(merge(gdays, { ["2026-09-25"] = 2700 }), fri, goal), 4, "goal streak counts today once met")
+eq(C.goalStreak(merge(gdays, { ["2026-09-25"] = 1800 }), fri, goal), 3, "goal streak stands while today is short")
+eq(C.goalStreak(build(seq("2026-09-22", "h h l")), fri, goal), 0, "goal streak broken yesterday")
+eq(C.goalStreak(gdays, fri, nil), 0, "no goal, no goal streak")
+eq(C.goalStreak({}, fri, goal), 0, "goal streak empty")
+
+-- ------------------------------------------------------------ calendar ---
+local cal = C.calendar(build(read), fri, 5, true)
+eq(#cal, 3, "calendar three months")
+eq(os.date("%B", cal[1].time) .. " " .. os.date("%B", cal[3].time), "July September", "calendar July to September")
+eq(cal[1].offset, 2, "July 2026 starts on a Wednesday")
+eq(cal[2].offset, 5, "August 2026 starts on a Saturday")
+eq(cal[3].offset, 1, "September 2026 starts on a Tuesday")
+eq(#cal[1].days .. " " .. #cal[2].days .. " " .. #cal[3].days, "31 31 30", "calendar month lengths")
+local sep = cal[3].days
+eq(sep[25].today, true, "calendar today")
+eq(sep[25].level, "m", "calendar today's level")
+eq(sep[26].level, "f", "calendar after today")
+eq(sep[20].level, "o", "calendar nothing read")
+eq(sep[23].level, "l", "calendar under 20 min")
+eq(sep[22].level, "h", "calendar 40 min or more")
+eq(sep[1].level, "m", "calendar 20 to 39 min")
+eq(tostring(sep[20].run) .. " " .. tostring(sep[21].run) .. " " .. tostring(sep[25].run), "false true true", "calendar the run")
+eq(tostring(sep[21].joins_prev) .. " " .. tostring(sep[21].joins_next), "false true", "calendar run starts")
+eq(tostring(sep[25].joins_prev) .. " " .. tostring(sep[25].joins_next), "true false", "calendar run ends today")
+cal = C.calendar(build(history), fri, 4, false)
+eq(tostring(cal[3].days[24].joins_next) .. " " .. tostring(cal[3].days[25].run), "false false", "calendar run ends yesterday until today is read")
+cal = C.calendar(run31, fri, 31, true)
+eq(tostring(cal[2].days[31].joins_next) .. " " .. tostring(cal[3].days[1].joins_prev), "true true", "calendar run crosses the month")
+eq(tostring(cal[2].days[25].run) .. " " .. tostring(cal[2].days[26].joins_prev), "false false", "calendar run's first day")
+cal = C.calendar({}, ny, 0, false)
+eq(os.date("%Y-%m", cal[1].time) .. " " .. os.date("%Y-%m", cal[3].time), "2026-11 2027-01", "calendar across the new year")
+eq(cal[3].days[1].today and cal[3].days[2].level, "f", "calendar new year's day")
+cal = C.calendar({}, os.time{ year = 2028, month = 3, day = 1, hour = 9 }, 0, false)
+eq(#cal[2].days, 29, "calendar leap February")
+
+-- -------------------------------------------------------------- flame ---
+local function flame(streak, read_today)
+    local f = C.flame(streak, read_today)
+    return f.size .. " " .. f.variant .. " " .. f.h .. (f.muted and " muted" or "")
 end
-
--- --------------------------------------------------------- daily goal ---
-local g = F.dailyGoal(720, 45)
-eq(g.num .. " " .. g.unit .. " | " .. g.right, "33 min to today’s goal | 12 of 45 min", "daily goal partway")
-eq(math.abs(g.fraction - 12 / 45) < 1e-9, true, "daily goal fraction")
-g = F.dailyGoal(0, 45)
-eq(g.num .. " | " .. g.right, "45 | 0 of 45 min", "daily goal not started")
-g = F.dailyGoal(3120, 45)
-eq(g.num .. " " .. g.unit .. " | " .. g.right, "52 min today | Goal done", "daily goal done")
-eq(g.fraction, 1, "daily goal done is full")
-g = F.dailyGoal(2700, 45)
-eq(tostring(g.done), "true", "daily goal exactly met")
-
-eq(F.bestLine(12, 4), "Best run: 12 days", "best line")
-eq(F.bestLine(4, 4), nil, "best line hidden when current")
-eq(F.bestLine(1, 0), nil, "best line hidden under 2")
-eq(F.goalPace(24, fri), 18, "goal pace by today")
-local v, sub = F.booksTile(14, 24, fri)
-eq(v .. " | " .. sub, "14 of 24 | Goal pace: 18 by today", "books tile with goal")
-v, sub = F.booksTile(14, nil, fri)
-eq(v .. " | " .. sub, "14 | finished so far", "books tile without goal")
-v, sub = F.booksTile(4, 6, fri)
-eq(v .. " | " .. sub, "4 of 6 | Goal pace: 4 by today", "books tile with Bookshelf's yearly goal")
-v, sub = F.weekTile(7200, 7440)
-eq(v .. " | " .. sub, "2 h 00 min | Last week: 2 h 04 min", "week tile")
-
--- ------------------------------------------------------------- strip ---
-local st = C.strip(4, 12, false)
-eq(st.n .. " " .. st.filled .. " " .. tostring(st.pending) .. " " .. tostring(st.bar), "12 4 true false", "strip against best run")
-st = C.strip(5, 12, true)
-eq(tostring(st.pending), "false", "strip today read")
-st = C.strip(3, 3, false)
-eq(st.n, 7, "strip at least seven")
-st = C.strip(0, 12, false)
-eq(tostring(st.pending), "false", "strip no run, nothing pending")
-st = C.strip(31, 31, true)
-eq(tostring(st.bar), "true", "strip long run becomes a bar")
-
-r = C.compute(build(history), fri)
-eq(r.last_week_seconds, 8100, "chain last week")
-eq(r.today_seconds, 0, "chain today seconds")
-eq(math.abs(r.avg_day_seconds - 35100 / 19) < 1e-6, true, "chain average reading day")
-eq(C.compute({}, fri).avg_day_seconds, nil, "chain no average without history")
+eq(flame(0, false), "medium dashed 52 muted", "flame no run")
+eq(flame(1, true), "small solid 36", "flame 1 day")
+eq(flame(2, true), "small solid 36", "flame 2 days")
+eq(flame(3, true), "medium solid 52", "flame 3 days")
+eq(flame(6, true), "medium solid 52", "flame 6 days")
+eq(flame(7, true), "large solid 64", "flame 7 days")
+eq(flame(29, true), "large solid 64", "flame 29 days")
+eq(flame(30, true), "large core 64", "flame 30 days has a core")
+eq(flame(1, false), "small outline 36", "flame 1 day, today not read")
+eq(flame(2, false), "small outline 36", "flame 2 days, today not read")
+eq(flame(3, false), "medium outline 52", "flame 3 days, today not read")
+eq(flame(6, false), "medium outline 52", "flame 6 days, today not read")
+eq(flame(7, false), "large outline 64", "flame 7 days, today not read")
+eq(flame(29, false), "large outline 64", "flame 29 days, today not read")
+eq(flame(30, false), "large outline 64", "flame 30 days, today not read is an outline")
+eq(C.flame(1, true).w .. " " .. C.flame(3, true).w .. " " .. C.flame(7, true).w, "32 46 56", "flame widths")
 
 -- ------------------------------------------------------ chapter marks ---
 local sharp = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389, 396, 401, 403, 410, 438, 439 }
@@ -262,6 +299,13 @@ for i = 2, #kept do closest = math.min(closest, kept[i] - kept[i - 1]) end
 eq(closest >= C.MIN_GAP, true, "no two marks closer than the minimum gap")
 eq(kept[#kept] < 0.99, true, "no marks in the last 1%")
 eq(#C.thinTicks({}), 0, "no chapters, no marks")
+local from, to = C.chapterBounds(kept, 305 / 440)
+eq(from, 304 / 440, "chapter bounds: Chapter Thirteen starts")
+eq(to, 327 / 440, "chapter bounds: Chapter Fourteen next")
+from, to = C.chapterBounds({ 0.34, 0.69 }, 0.2)
+eq(tostring(from) .. " " .. tostring(to), "nil 0.34", "chapter bounds in the first chapter")
+from, to = C.chapterBounds({ 0.34, 0.69 }, 0.9)
+eq(tostring(from) .. " " .. tostring(to), "0.69 nil", "chapter bounds in the last chapter")
 
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

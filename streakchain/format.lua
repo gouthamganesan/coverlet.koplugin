@@ -6,8 +6,9 @@ luajit. The wording rules come from the design canvas:
 
   * nothing refers to the time of day ("today", never "tonight")
   * no singular/plural splits where a unit can avoid it: "11 min",
-    "4 day streak", "14 finished this year"
-  * a stats-line part drops out rather than changing its words
+    "4 day streak", "Best run: 12"
+  * encouraging, never discouraging: time read rounds down, time left rounds
+    up, and a row with nothing to say drops out rather than scolding
 ]]
 
 local F = {}
@@ -15,15 +16,19 @@ local F = {}
 F.SEP = " · "
 F.CHAPTER_TITLE_MAX = 20
 F.LOW_BATTERY = 15
+F.SEGMENTS_MAX = 24 -- book goals up to this many draw one cell per book
 
 F.NOTE_IN = "Today is in the chain."
 F.NOTE_BEST = "Your longest run so far."
 F.NOTE_NEW = "One page starts a new run."
 
+F.FINISHED = "Finished"
 F.NO_BOOK_TITLE = "No book open"
 F.NO_BOOK_SUB = "Your shelf is one tap away."
 F.STATS_OFF_NOTE = "Your streak appears once Reading statistics is on."
 F.STATS_OFF_HINT = "Turn it on in Tools · Reading statistics."
+
+F.WEEKDAYS = { "M", "T", "W", "T", "F", "S", "S" }
 
 local function trim(s)
     return (s:gsub("^%s+", ""):gsub("%s+$", ""))
@@ -83,23 +88,28 @@ function F.left(seconds)
     return clock(math.max(1, math.ceil((seconds or 0) / 60)))
 end
 
--- Time already read: rounded down, can be 0.
-function F.total(seconds)
-    return clock(math.floor((seconds or 0) / 60))
+-- Time already read, rounded down, in the short form the ledger uses:
+-- "45 min", "3 h 07".
+function F.spent(seconds)
+    local m = math.floor((seconds or 0) / 60)
+    if m < 60 then return m .. " min" end
+    return string.format("%d h %02d", math.floor(m / 60), m % 60)
 end
 
-function F.percent(p)
-    p = math.max(0, math.min(1, p or 0))
-    return math.floor(p * 100 + 1e-9) .. "%"
+-- A goal in minutes, as hours: "10 h", "2 h 30", or "45 min".
+function F.goalHours(minutes)
+    if minutes < 60 then return minutes .. " min" end
+    if minutes % 60 == 0 then return math.floor(minutes / 60) .. " h" end
+    return string.format("%d h %02d", math.floor(minutes / 60), minutes % 60)
 end
 
 --[[
-The next step, the end of the line under the title.
+The next step, the line under the author.
   o.finished          book is done: no next step
   o.has_chapters      the book has a table of contents
   o.in_last_chapter   no chapter after this one
   o.chapter_title     title of the current chapter
-  o.generic           force "this chapter" (the line was too long)
+  o.generic           force "this chapter"
   o.chapter_seconds / o.book_seconds   time left, when a pace is known
   o.chapter_pages / o.book_pages       pages left, used without a pace
 ]]
@@ -127,43 +137,10 @@ function F.nextStep(o)
     return nil
 end
 
-function F.metaLine(author, pct, next_step, finished)
-    local parts = {}
-    if author then table.insert(parts, author) end
-    if finished then
-        table.insert(parts, "finished")
-    else
-        table.insert(parts, F.percent(pct))
-        if next_step then table.insert(parts, next_step) end
-    end
-    return table.concat(parts, F.SEP)
-end
-
--- The meta line without the author, for layouts that give the author its own
--- line: "58% · 11 min left in Part II", or "finished".
-function F.progressLine(pct, step_opts, finished)
-    local o = {}
-    for k, v in pairs(step_opts or {}) do o[k] = v end
-    o.finished = finished
-    return F.metaLine(nil, pct, F.nextStep(o), finished)
-end
-
--- The meta line, from most to least detailed. The screen uses the first one
--- that fits on a single line.
-function F.metaVariants(author, pct, step_opts, finished)
-    local variants = {}
-    local function add(a, generic)
-        local o = {}
-        for k, v in pairs(step_opts or {}) do o[k] = v end
-        o.generic = generic
-        o.finished = finished
-        local line = F.metaLine(a, pct, F.nextStep(o), finished)
-        if variants[#variants] ~= line then table.insert(variants, line) end
-    end
-    add(author, false)
-    add(author, true)
-    add(nil, true)
-    return variants
+-- The line under the author: the next step, or "Finished".
+function F.stepLine(step_opts, finished)
+    if finished then return F.FINISHED end
+    return F.nextStep(step_opts or {})
 end
 
 -- Streak guard: the run is alive but today isn't in it yet.
@@ -178,20 +155,20 @@ function F.streakNote(streak, read_today, best)
     return F.NOTE_IN
 end
 
--- "Best run: 12 days", only while the best run is ahead of the current one.
+-- "Best run: 12", only while the best run is ahead of the current one.
 function F.bestLine(best, streak)
     if best and best >= 2 and best > (streak or 0) then
-        return "Best run: " .. best .. " days"
+        return "Best run: " .. best
     end
     return nil
 end
 
 -- The hero: time to the end as a number and its unit, "38" / "min to the end"
--- or "6 h 40" / "min to the end".
+-- or "2 h 40" / "to the end".
 function F.heroTime(seconds)
     local m = math.max(1, math.ceil((seconds or 0) / 60))
     if m < 60 then return tostring(m), "min to the end" end
-    return string.format("%d h %02d", math.floor(m / 60), m % 60), "min to the end"
+    return string.format("%d h %02d", math.floor(m / 60), m % 60), "to the end"
 end
 
 -- Without reading statistics there is no pace, so the hero is the page.
@@ -199,95 +176,95 @@ function F.heroPages(page, total)
     return tostring(page), "of " .. total .. " pages"
 end
 
-local function dayAfter(now, n)
-    local d = os.date("*t", now)
-    return os.time{ year = d.year, month = d.month, day = d.day + n, hour = 12 }
+local function shortDate(t)
+    return tonumber(os.date("%d", t)) .. " " .. os.date("%b", t)
 end
 
---[[
-The finish forecast, framed around the daily goal rather than reading speed.
-Each day from today reads one daily session: the daily goal when one is set,
-otherwise an average reading day. Today's share is what's left of today's
-session. Returns nil when there is nothing to forecast from.
-  line         "45 min a day finishes it Saturday." / "Today’s goal finishes it."
-               or, without a daily goal, "Done by Saturday." / "Done today."
-  today_share  the part of what's left that today covers, 0..1
-  label        finish-day label under the timeline: "SAT", "12 OCT", or nil (today)
-]]
-function F.forecast(remaining, today_read, daily, now, goal_minutes)
-    if not (remaining and remaining > 0 and daily and daily > 0) then return nil end
+-- Time in this book so far and since when: "6 h 40 in, since 12 Sep".
+-- Before a first full minute it's only the date.
+function F.bookSoFar(seconds, first, now)
+    if not first then return nil end
     now = now or os.time()
-    local budget = math.max(0, daily - (today_read or 0))
-    if remaining <= budget then
-        return { line = goal_minutes and "Today’s goal finishes it." or "Done today.", today_share = 1 }
-    end
-    local days = math.ceil((remaining - budget) / daily)
-    local t = dayAfter(now, days)
-    local when, label
-    if days <= 6 then
-        when = os.date("%A", t)
-        label = string.upper(os.date("%a", t))
+    local since
+    if os.date("%Y-%m-%d", first) == os.date("%Y-%m-%d", now) then
+        since = "started today"
     else
-        local day = tonumber(os.date("%d", t))
-        when = day .. " " .. os.date("%B", t)
-        label = day .. " " .. string.upper(os.date("%b", t))
+        since = "since " .. shortDate(first)
+        if os.date("%Y", first) ~= os.date("%Y", now) then since = since .. " " .. os.date("%Y", first) end
     end
-    local line = goal_minutes and (goal_minutes .. " min a day finishes it " .. when .. ".") or ("Done by " .. when .. ".")
-    return { line = line, today_share = budget / remaining, label = label }
+    if math.floor((seconds or 0) / 60) < 1 then
+        return (since:gsub("^%l", string.upper))
+    end
+    return F.spent(seconds) .. " in, " .. since
 end
 
 --[[
-Today's goal, the top row of the reader band.
-  num, unit   "33" / "min to today’s goal", or "52" / "min today" once done
-  right       "12 of 45 min", or "Goal done"
-  fraction    0..1 of the goal read today
+The Today column.
+  num, unit   "33" / "min to today’s goal"; "52" / "min today" once the goal is
+              met, or when no daily goal is set
+  fraction    0..1 of the daily goal read today; nil without a goal
+  rows        { { label, value }, ... }: the goal, pages today, goal day streak
 ]]
-function F.dailyGoal(today_seconds, goal_minutes)
+function F.today(today_seconds, goal_minutes, pages, goal_streak)
     local read = math.floor((today_seconds or 0) / 60)
-    if read >= goal_minutes then
-        return { num = tostring(read), unit = "min today", right = "Goal done", fraction = 1, done = true }
+    local t = { rows = {} }
+    if goal_minutes then
+        if read >= goal_minutes then
+            t.num, t.unit, t.fraction, t.done = tostring(read), "min today", 1, true
+            table.insert(t.rows, { "Daily goal", "Done" })
+        else
+            t.num, t.unit, t.fraction, t.done = tostring(goal_minutes - read), "min to today’s goal", read / goal_minutes, false
+            table.insert(t.rows, { "Read", read .. " of " .. goal_minutes .. " min" })
+        end
+    else
+        t.num, t.unit = tostring(read), "min today"
     end
+    if pages then table.insert(t.rows, { "Pages today", tostring(pages) }) end
+    if goal_minutes then table.insert(t.rows, { "Goal day streak", tostring(goal_streak or 0) }) end
+    return t
+end
+
+local function bookGoal(label, books, goal)
+    books = books or 0
     return {
-        num = tostring(goal_minutes - read),
-        unit = "min to today’s goal",
-        right = read .. " of " .. goal_minutes .. " min",
-        fraction = read / goal_minutes,
-        done = false,
+        label = label,
+        value = books .. " of " .. goal .. (goal == 1 and " book" or " books"),
+        fraction = math.min(1, books / goal),
+        segments = goal <= F.SEGMENTS_MAX and goal or nil,
+        filled = math.min(books, goal),
     }
 end
 
--- Where a yearly goal says you should be by today.
-function F.goalPace(goal, now)
-    now = now or os.time()
-    local d = os.date("*t", now)
-    local year_days = os.date("*t", os.time{ year = d.year, month = 12, day = 31, hour = 12 }).yday
-    return math.floor(goal * d.yday / year_days + 0.5)
+--[[
+The Goals column: a row for each of Bookshelf's goals that is on.
+  o = { now, weekly (minutes), week_seconds, monthly (books), books_month,
+        yearly (books), books_year }
+  -> { { label, value, fraction, segments = n | nil, filled }, ... }
+]]
+function F.goalRows(o)
+    local now = o.now or os.time()
+    local rows = {}
+    if o.weekly then
+        table.insert(rows, {
+            label = "This week",
+            value = F.spent(o.week_seconds) .. " of " .. F.goalHours(o.weekly),
+            fraction = math.min(1, (o.week_seconds or 0) / (o.weekly * 60)),
+        })
+    end
+    if o.monthly then table.insert(rows, bookGoal(os.date("%B", now), o.books_month, o.monthly)) end
+    if o.yearly then table.insert(rows, bookGoal(os.date("%Y", now), o.books_year, o.yearly)) end
+    return rows
 end
 
-function F.weekTile(week_seconds, last_week_seconds)
-    return F.total(week_seconds), "Last week: " .. F.total(last_week_seconds)
+-- The bigger picture under the goals: "Read in 2026" / "86 h".
+function F.yearLine(seconds, now)
+    local m = math.floor((seconds or 0) / 60)
+    local value = m < 60 and (m .. " min") or (math.floor(m / 60) .. " h")
+    return { label = "Read in " .. os.date("%Y", now or os.time()), value = value }
 end
 
-function F.booksTile(books, goal, now)
-    books = books or 0
-    if goal and goal > 0 then
-        return books .. " of " .. goal, "Goal pace: " .. F.goalPace(goal, now) .. " by today"
-    end
-    return tostring(books), "finished so far"
-end
-
-function F.statsLine(best, streak, week_seconds, books, goal)
-    local parts = {}
-    if best and best >= 2 and best > (streak or 0) then
-        table.insert(parts, "Best run: " .. best .. " days")
-    end
-    table.insert(parts, F.total(week_seconds) .. " this week")
-    if goal and goal > 0 then
-        table.insert(parts, (books or 0) .. " of " .. goal .. " books")
-    else
-        table.insert(parts, (books or 0) .. " finished this year")
-    end
-    return table.concat(parts, F.SEP)
+function F.monthName(t)
+    return os.date("%B", t)
 end
 
 function F.headerDate(t)

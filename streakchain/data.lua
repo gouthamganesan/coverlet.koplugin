@@ -4,19 +4,20 @@ so streakchain/screen.lua only ever draws and never asks KOReader anything.
 
   model.header = { date, battery = "Battery 8%" | nil }
   model.book   = nil (no book) | {
-      title, author, meta = { line variants, most detailed first },
-      progress = "58% · 11 min left in Part II" (the meta line without the author),
-      pct (0..1), finished, page, total,
-      chapters = { { pos = 0..1, title }, ... },  -- for timeline names
-      ticks = { 0..1, ... },                       -- thinned chapter marks
-      hero = { num, unit } | nil,                  -- nil when finished
-      forecast = { line, today_share, label } | nil,
-      cover = BlitBuffer | nil,                    -- freed by the screen
+      title, author, pct (0..1), finished, page, total,
+      ticks = { 0..1, ... },                   -- thinned chapter marks
+      step = "22 min left in Chapter Thirteen" | "Finished" | nil,
+      hero = { num, unit } | nil,              -- nil when finished
+      so_far = "6 h 40 in, since 12 Sep" | nil,
+      cover = BlitBuffer | nil,                -- freed by the screen
   }
   model.stats  = nil (Reading statistics off) | {
-      goal_minutes, daily = { num, unit, right, fraction, done } | nil (no daily goal),
-      streak, best, read_today, note, best_line, strip = { n, filled, pending, best, bar },
-      week = { value, sub }, books = { value, sub },
+      today = { num, unit, fraction | nil, done, rows = { { label, value } } },
+      goals = { { label, value, fraction, segments | nil, filled }, ... },
+      year = { label, value },                 -- "Read in 2026" / "86 h"
+      streak, best, read_today, best_line, note,
+      flame = { variant, w, h, drop, muted },
+      calendar = { { name, offset, days = { { day, level, today, run, joins_prev, joins_next } } } },
   }
 ]]
 
@@ -32,7 +33,6 @@ local Format = require("streakchain/format")
 local Data = {}
 
 local DEFAULT_MAX_SEC = 120 -- KOReader's statistics default
-local MIN_TIMED_PAGES = 10  -- below this the book has no pace of its own yet
 
 local function dbPath()
     return DataStorage:getSettingsDir() .. "/statistics.sqlite3"
@@ -119,6 +119,18 @@ local function bookId(conn, md5)
     return tonumber(row[1]), tonumber(row[2])
 end
 
+-- Pages and average seconds per page for one book, by its partial md5.
+function Data.bookPace(path, md5)
+    return withDB(path, function(conn)
+        local id, pages = bookId(conn, md5)
+        if not id then return nil end
+        local n, t = conn:rowexec(string.format(
+            "SELECT count(DISTINCT page), sum(duration) FROM page_stat WHERE id_book = %d;", id))
+        n, t = tonumber(n) or 0, tonumber(t) or 0
+        return { pages = pages, avg = n > 0 and t / n or nil }
+    end)
+end
+
 -- Time spent in one book and when its first page was read: { seconds, first }.
 function Data.bookTime(path, md5)
     return withDB(path, function(conn)
@@ -129,18 +141,6 @@ function Data.bookTime(path, md5)
         first = tonumber(first)
         if not first then return nil end
         return { seconds = tonumber(t) or 0, first = first }
-    end)
-end
-
--- Pages, average seconds per page and timed pages for one book, by its partial md5.
-function Data.bookPace(path, md5)
-    return withDB(path, function(conn)
-        local id, pages = bookId(conn, md5)
-        if not id then return nil end
-        local n, t = conn:rowexec(string.format(
-            "SELECT count(DISTINCT page), sum(duration) FROM page_stat WHERE id_book = %d;", id))
-        n, t = tonumber(n) or 0, tonumber(t) or 0
-        return { pages = pages, avg = n > 0 and t / n or nil, timed = n }
     end)
 end
 
@@ -179,6 +179,36 @@ function Data.goals()
     return goals
 end
 
+--[[
+The stats half of the model, from the day map and the counts only the
+database has. Pure: tools/fixtures.lua builds its states through it too.
+  counts = { pages_today, books_month, books_year }
+]]
+function Data.statsModel(days, now, goals, counts)
+    goals, counts = goals or {}, counts or {}
+    local c = Chain.compute(days, now)
+    local goal_streak = goals.daily and Chain.goalStreak(days, now, goals.daily * 60) or nil
+    local calendar = Chain.calendar(days, now, c.streak, c.read_today)
+    for _, month in ipairs(calendar) do month.name = Format.monthName(month.time) end
+    return {
+        today = Format.today(c.today_seconds, goals.daily, counts.pages_today, goal_streak),
+        goals = Format.goalRows{
+            now = now,
+            weekly = goals.weekly, week_seconds = c.week_seconds,
+            monthly = goals.monthly, books_month = counts.books_month,
+            yearly = goals.yearly, books_year = counts.books_year,
+        },
+        year = Format.yearLine(c.year_seconds, now),
+        streak = c.streak,
+        best = c.best,
+        read_today = c.read_today,
+        best_line = Format.bestLine(c.best, c.streak),
+        note = Format.streakNote(c.streak, c.read_today, c.best),
+        flame = Chain.flame(c.streak, c.read_today),
+        calendar = calendar,
+    }
+end
+
 local function fileTitle(file)
     return file and (file:match("([^/]+)%.[^./]+$") or file:match("([^/]+)$")) or nil
 end
@@ -206,7 +236,6 @@ local function readerState(ui, stats_on)
         page = page,
         total = total,
         pct = page / total,
-        chapters = {},
         ticks = {},
         step = { book_pages = total - page + 1 },
     }
@@ -225,9 +254,7 @@ local function readerState(ui, stats_on)
             local fractions = {}
             for _, entry in ipairs(toc.toc) do
                 if (entry.depth or 1) == 1 and type(entry.page) == "number" and entry.page <= total then
-                    local pos = (entry.page - 1) / total
-                    table.insert(state.chapters, { pos = pos, title = toc:cleanUpTocTitle(entry.title or "") })
-                    table.insert(fractions, pos)
+                    table.insert(fractions, (entry.page - 1) / total)
                 end
             end
             state.ticks = Chain.thinTicks(fractions)
@@ -237,7 +264,6 @@ local function readerState(ui, stats_on)
     local st = ui.statistics
     if stats_on and st then
         local avg = st.avg_time
-        state.timed = st.book_read_pages or 0
         if not (avg and avg == avg and avg > 0) then avg = defaultPace() end
         step.book_seconds = step.book_pages * avg
         if step.chapter_pages then step.chapter_seconds = step.chapter_pages * avg end
@@ -253,8 +279,11 @@ function Data.saveSnapshot(ui, state)
     return state
 end
 
--- Book fields shared by both paths: meta line, hero and forecast.
-local function finishBook(state, finished, stats, now)
+--[[
+The book half of the model, shared by both paths and by the fixtures.
+  time = { seconds, first } | nil   time in this book so far, from the database
+]]
+function Data.bookModel(state, finished, time, now)
     local step = state.step or {}
     local book = {
         title = state.title,
@@ -263,44 +292,41 @@ local function finishBook(state, finished, stats, now)
         finished = finished,
         page = state.page,
         total = state.total,
-        chapters = state.chapters or {},
         ticks = state.ticks or {},
-        meta = Format.metaVariants(state.author, state.pct or 0, step, finished),
-        progress = Format.progressLine(state.pct or 0, step, finished),
+        step = Format.stepLine(step, finished),
+        so_far = time and Format.bookSoFar(time.seconds, time.first, now) or nil,
     }
     if finished then return book end
     if step.book_seconds then
         book.hero = { Format.heroTime(step.book_seconds) }
-        local has_pace = (state.timed or 0) >= MIN_TIMED_PAGES
-        local daily = stats and (stats.goal_minutes and stats.goal_minutes * 60 or stats.avg_day_seconds)
-        if has_pace and daily then
-            book.forecast = Format.forecast(step.book_seconds, stats.today_seconds, daily, now, stats.goal_minutes)
-        end
     elseif state.page and state.total then
         book.hero = { Format.heroPages(state.page, state.total) }
     end
     return book
 end
 
-local function readerBook(ui, stats_on, stats, now)
+local function readerBook(ui, stats_on, now)
     local state = readerState(ui, stats_on)
     pcall(Data.saveSnapshot, ui, state)
     local summary = ui.doc_settings and ui.doc_settings:readSetting("summary")
     local finished = (summary and summary.status == "complete") or false
-    local book = finishBook(state, finished, stats, now)
+    local md5 = ui.doc_settings and ui.doc_settings:readSetting("partial_md5_checksum")
+    local time = stats_on and md5 and Data.bookTime(nil, md5) or nil
+    local book = Data.bookModel(state, finished, time, now)
     book.cover = coverFor(ui, ui.document, ui.document.file)
     return book
 end
 
 -- The last book, from its sidecar and the snapshot the reader saved when it
 -- closed (sleeping from the file browser or Bookshelf).
-local function lastBook(ui, stats_on, stats, now)
+local function lastBook(ui, stats_on, now)
     local file = G_reader_settings:readSetting("lastfile")
     if not file or lfs.attributes(file, "mode") ~= "file" then return nil end
     local ok, ds = pcall(DocSettings.open, DocSettings, file)
     if not ok or not ds then return nil end
     local props = ds:readSetting("doc_props") or {}
     local summary = ds:readSetting("summary")
+    local md5 = ds:readSetting("partial_md5_checksum")
 
     local snap = G_reader_settings:readSetting("streakchain_snapshot")
     if type(snap) ~= "table" or snap.file ~= file then snap = nil end
@@ -314,18 +340,17 @@ local function lastBook(ui, stats_on, stats, now)
     }
     state.pct = pct
     if not snap and stats_on then
-        local md5 = ds:readSetting("partial_md5_checksum")
         local pace = md5 and Data.bookPace(nil, md5)
         if pace and pace.pages and pace.pages > 0 then
             local pages_left = math.max(1, math.ceil((1 - pct) * pace.pages))
             state.page = pace.pages - pages_left + 1
             state.total = pace.pages
-            state.timed = pace.timed
             state.step.book_pages = pages_left
             state.step.book_seconds = pages_left * (pace.avg or defaultPace())
         end
     end
-    local book = finishBook(state, finished, stats, now)
+    local time = stats_on and md5 and Data.bookTime(nil, md5) or nil
+    local book = Data.bookModel(state, finished, time, now)
     book.cover = coverFor(ui, nil, file)
     return book
 end
@@ -342,26 +367,12 @@ end
 local function readerStats(now)
     local days = Data.readDays()
     if not days then return nil end
-    local c = Chain.compute(days, now)
-    local year_start = os.time{ year = tonumber(os.date("%Y", now)), month = 1, day = 1, hour = 0 }
-    local books = Data.booksFinishedSince(nil, year_start)
     local goals = Data.goals()
-    local week_value, week_sub = Format.weekTile(c.week_seconds, c.last_week_seconds)
-    local books_value, books_sub = Format.booksTile(books, goals.yearly, now)
-    return {
-        goal_minutes = goals.daily,
-        daily = goals.daily and Format.dailyGoal(c.today_seconds, goals.daily) or nil,
-        streak = c.streak,
-        best = c.best,
-        read_today = c.read_today,
-        today_seconds = c.today_seconds,
-        avg_day_seconds = c.avg_day_seconds,
-        note = Format.streakNote(c.streak, c.read_today, c.best),
-        best_line = Format.bestLine(c.best, c.streak),
-        strip = Chain.strip(c.streak, c.best, c.read_today),
-        week = { value = week_value, sub = week_sub },
-        books = { value = books_value, sub = books_sub },
-    }
+    return Data.statsModel(days, now, goals, {
+        pages_today = Data.pagesSince(nil, Chain.startOfDay(now)),
+        books_month = goals.monthly and Data.booksFinishedSince(nil, Chain.startOfMonth(now)) or nil,
+        books_year = goals.yearly and Data.booksFinishedSince(nil, Chain.startOfYear(now)) or nil,
+    })
 end
 
 function Data.build(ui, now)
@@ -387,9 +398,9 @@ function Data.build(ui, now)
 
     local ok, book
     if ui.document then
-        ok, book = pcall(readerBook, ui, stats_on, model.stats, now)
+        ok, book = pcall(readerBook, ui, stats_on, now)
     else
-        ok, book = pcall(lastBook, ui, stats_on, model.stats, now)
+        ok, book = pcall(lastBook, ui, stats_on, now)
     end
     if ok then
         model.book = book
@@ -398,8 +409,8 @@ function Data.build(ui, now)
     end
     logger.info("streakchain: sleep screen from", ui.document and "the reader" or "the file browser",
         "| book:", model.book and model.book.title or "none",
-        "| progress:", model.book and model.book.progress or "-",
-        "| forecast:", model.book and model.book.forecast and model.book.forecast.line or "-")
+        "| next:", model.book and model.book.step or "-",
+        "| so far:", model.book and model.book.so_far or "-")
     return model
 end
 

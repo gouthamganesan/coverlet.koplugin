@@ -54,10 +54,27 @@ print("next chapter after", page, "->", toc:getNextChapter(page))
 print("title at page", toc:getTocTitleByPage(page))
 print("statistics", reader.statistics ~= nil, reader.statistics and reader.statistics.avg_time)
 
+-- Two earlier sessions in this book, written under the id the statistics
+-- plugin gave it, so the time-in-the-book line is found through the book's
+-- md5 the way it is on the device.
+local st = reader.statistics
+local seeded = st and st.id_curr_book
+if seeded then
+    reader.statistics:insertDB()
+    local SQ3 = require("lua-ljsqlite3/init")
+    local conn = SQ3.open(DataStorage:getSettingsDir() .. "/statistics.sqlite3")
+    local t0 = os.time() - 3 * 86400
+    conn:exec(string.format("INSERT INTO page_stat_data VALUES (%d, 300, %d, 1800, %d), (%d, 301, %d, 600, %d);",
+        st.id_curr_book, t0, total, st.id_curr_book, t0 + 1800, total))
+    conn:close()
+end
+print("statistics book id", seeded)
+
 local Data = require("streakchain/data")
 local model = Data.build(reader)
-print("model.book.meta:")
-for _, v in ipairs(model.book and model.book.meta or {}) do print("  " .. v) end
+print("model.book.step", model.book and model.book.step)
+print("model.book.hero", model.book and model.book.hero and table.concat(model.book.hero, " "))
+print("model.book.so_far", model.book and model.book.so_far)
 print("model.book.ticks", model.book and #model.book.ticks)
 
 local StreakScreen = require("streakchain/screen")
@@ -74,19 +91,23 @@ render(model, "repro")
 
 -- Now sleep from the file browser: no open document, only the last file and
 -- the snapshot the reader just saved.
-local reader_meta = model.book.meta[1]
+local reader_step = model.book.step
 reader:handleEvent(require("ui/event"):new("CloseDocument"))
 G_reader_settings:saveSetting("lastfile", book_path)
 local fm = { bookinfo = require("apps/filemanager/filemanagerbookinfo") }
 local fm_model = Data.build(fm)
-print("file browser meta:", fm_model.book and fm_model.book.meta[1])
+print("file browser step:", fm_model.book and fm_model.book.step)
 print("file browser ticks:", fm_model.book and #fm_model.book.ticks)
 render(fm_model, "repro-filebrowser")
-local same = fm_model.book and fm_model.book.meta[1] == reader_meta and #fm_model.book.ticks == #model.book.ticks
+print("file browser so far:", fm_model.book and fm_model.book.so_far)
+local same = fm_model.book and fm_model.book.step == reader_step and #fm_model.book.ticks == #model.book.ticks
+    and fm_model.book.so_far == model.book.so_far
+local so_far_ok = not seeded or (model.book.so_far or ""):match("^40 min in, since ") ~= nil
+print(so_far_ok and "ok   time in the book found through its md5" or "FAIL time in the book: " .. tostring(model.book.so_far))
 print(same and "ok   file browser matches the reader" or "FAIL file browser differs from the reader")
 
 -- A different last file must not borrow this book's snapshot.
 G_reader_settings:saveSetting("lastfile", "/books/does-not-exist.epub")
 local none = Data.build(fm)
 print(none.book == nil and "ok   missing last file shows no book" or "FAIL missing last file")
-os.exit(same and 0 or 1)
+os.exit((same and so_far_ok and none.book == nil) and 0 or 1)
