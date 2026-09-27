@@ -99,14 +99,44 @@ function Data.booksFinishedSince(path, since)
     end) or 0
 end
 
+-- Pages read since a time, counted the way KOReader's own "Today" statistics
+-- count them: each page of each book once, in the book's current layout.
+function Data.pagesSince(path, since)
+    return withDB(path, function(conn)
+        local n = conn:rowexec(string.format([[
+            SELECT count(*) FROM (
+                SELECT 1 FROM page_stat WHERE start_time >= %d GROUP BY id_book, page
+            );]], since))
+        return tonumber(n) or 0
+    end)
+end
+
+local function bookId(conn, md5)
+    local stmt = conn:prepare("SELECT id, pages FROM book WHERE md5 = ?;")
+    local row = stmt:reset():bind(md5):step()
+    stmt:close()
+    if not row then return nil end
+    return tonumber(row[1]), tonumber(row[2])
+end
+
+-- Time spent in one book and when its first page was read: { seconds, first }.
+function Data.bookTime(path, md5)
+    return withDB(path, function(conn)
+        local id = bookId(conn, md5)
+        if not id then return nil end
+        local t, first = conn:rowexec(string.format(
+            "SELECT sum(duration), min(start_time) FROM page_stat_data WHERE id_book = %d;", id))
+        first = tonumber(first)
+        if not first then return nil end
+        return { seconds = tonumber(t) or 0, first = first }
+    end)
+end
+
 -- Pages, average seconds per page and timed pages for one book, by its partial md5.
 function Data.bookPace(path, md5)
     return withDB(path, function(conn)
-        local stmt = conn:prepare("SELECT id, pages FROM book WHERE md5 = ?;")
-        local row = stmt:reset():bind(md5):step()
-        stmt:close()
-        if not row then return nil end
-        local id, pages = tonumber(row[1]), tonumber(row[2])
+        local id, pages = bookId(conn, md5)
+        if not id then return nil end
         local n, t = conn:rowexec(string.format(
             "SELECT count(DISTINCT page), sum(duration) FROM page_stat WHERE id_book = %d;", id))
         n, t = tonumber(n) or 0, tonumber(t) or 0
@@ -115,10 +145,12 @@ function Data.bookPace(path, md5)
 end
 
 --[[
-Reading goals are set in Bookshelf's Reading goal module, not here: daily in
-minutes, yearly in books, each with its own on/off switch. Read them live
-from Bookshelf's settings store when Bookshelf is loaded, else from its file.
-Returns { daily = minutes | nil, yearly = books | nil }.
+Reading goals are set in Bookshelf's Reading goal module, not here, each with
+its own on/off switch: daily in minutes, weekly in minutes, monthly and yearly
+in books. Read them live from Bookshelf's settings store when Bookshelf is
+loaded, else from its file. Daily and yearly fall back to Bookshelf's defaults;
+weekly and monthly only count once a value is set.
+Returns { daily, weekly, monthly, yearly }, each nil when off.
 ]]
 local BOOKSHELF_DEFAULTS = { daily = 30, yearly = 24 }
 
@@ -137,11 +169,12 @@ function Data.goals()
     local active = read("micromodule_reading_goal_active", nil)
     if type(active) ~= "table" then active = { daily = true, yearly = true } end
     local goals = {}
-    if active.daily then
-        goals.daily = math.max(1, tonumber(read("micromodule_reading_goal_daily", BOOKSHELF_DEFAULTS.daily)) or BOOKSHELF_DEFAULTS.daily)
-    end
-    if active.yearly then
-        goals.yearly = math.max(1, tonumber(read("micromodule_reading_goal_yearly", BOOKSHELF_DEFAULTS.yearly)) or BOOKSHELF_DEFAULTS.yearly)
+    for _, kind in ipairs({ "daily", "weekly", "monthly", "yearly" }) do
+        if active[kind] then
+            local default = BOOKSHELF_DEFAULTS[kind]
+            local value = tonumber(read("micromodule_reading_goal_" .. kind, default)) or default
+            if value and value > 0 then goals[kind] = math.max(1, math.floor(value)) end
+        end
     end
     return goals
 end

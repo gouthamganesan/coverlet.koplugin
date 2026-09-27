@@ -109,7 +109,8 @@ conn:exec([[
                 max(((page - 1) * pages) / total_pages + 1, (page * pages) / total_pages) AS last_page, idx
             FROM page_stat_data JOIN book ON book.id = id_book
             JOIN (SELECT number as idx FROM numbers) AS N ON idx <= (last_page - first_page + 1));
-    INSERT INTO book (id, title, pages, md5) VALUES (1, 'Kafka', 100, 'aaa'), (2, 'Short', 10, 'bbb');
+    INSERT INTO book (id, title, pages, md5) VALUES (1, 'Kafka', 100, 'aaa'), (2, 'Short', 10, 'bbb'),
+        (3, 'Today', 50, 'ccc');
 ]])
 local now = os.time{ year = 2026, month = 9, day = 25, hour = 21 }
 local function at(days_ago, hour)
@@ -127,6 +128,11 @@ for i = 1, 10 do
 end
 -- A late-night page just before midnight still counts for that day.
 stmt:reset():bind(1, 31, at(6, 23) + 30 * 60, 50, 100):step()
+-- Today: pages 1..5 of a third book, and page 5 read twice.
+for i = 1, 5 do
+    stmt:reset():bind(3, i, at(0, 19) + i * 60, 60, 50):step()
+end
+stmt:reset():bind(3, 5, at(0, 19) + 10 * 60, 60, 50):step()
 stmt:close()
 conn:close()
 
@@ -137,11 +143,22 @@ check(secs(1) == 8 * 60, "sql day total yesterday", secs(1))
 check(secs(4) == 6 * 60, "sql day total four days ago", secs(4))
 check(secs(5) == 10 * 45, "sql second book's day", secs(5))
 check(secs(6) == 50, "sql late-night page lands on its own day", secs(6))
+check(secs(0) == 6 * 60, "sql today's total", secs(0))
 local chain = C.compute(days, now)
-check(chain.streak == 6, "sql-fed streak", chain.streak)
+check(chain.streak == 7, "sql-fed streak", chain.streak)
 local year_start = os.time{ year = 2026, month = 1, day = 1, hour = 0 }
+local month_start = os.time{ year = 2026, month = 9, day = 1, hour = 0 }
+local day_start = os.time{ year = 2026, month = 9, day = 25, hour = 0 }
 check(Data.booksFinishedSince(db_path, year_start) == 1, "sql finished this year", Data.booksFinishedSince(db_path, year_start))
+check(Data.booksFinishedSince(db_path, month_start) == 1, "sql finished this month", Data.booksFinishedSince(db_path, month_start))
 check(Data.booksFinishedSince(db_path, now) == 0, "sql finished since now is none")
+local pages = Data.pagesSince(db_path, day_start)
+check(pages == 5, "sql pages today, each page once", pages)
+check(Data.pagesSince(db_path, now + 86400) == 0, "sql no pages tomorrow")
+local spent = Data.bookTime(db_path, "aaa")
+check(spent and spent.seconds == 30 * 60 + 50, "sql time in one book", spent and spent.seconds)
+check(spent and spent.first == at(6, 23) + 30 * 60, "sql the book's first page", spent and spent.first)
+check(Data.bookTime(db_path, "zzz") == nil, "sql unknown book has no time")
 local pace = Data.bookPace(db_path, "aaa")
 -- 30 pages at 60 s plus the late-night page at 50 s
 check(pace and pace.pages == 100 and math.abs((pace.avg or 0) - (30 * 60 + 50) / 31) < 0.01, "sql book pace", pace and pace.avg)
@@ -162,10 +179,22 @@ check(next(Data.goals()) == nil, "no Bookshelf file means no goals")
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6, micromodule_reading_goal_weekly = 600 })
 local goals = Data.goals()
 check(goals.daily == 45 and goals.yearly == 6, "goals read from Bookshelf's file", goals.daily .. "/" .. tostring(goals.yearly))
+check(goals.weekly == nil and goals.monthly == nil, "weekly and monthly are off until switched on")
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6,
+    micromodule_reading_goal_weekly = 600, micromodule_reading_goal_monthly = 2,
     micromodule_reading_goal_active = { daily = false, weekly = true, monthly = true, yearly = true } })
 goals = Data.goals()
 check(goals.daily == nil and goals.yearly == 6, "a goal switched off in Bookshelf is left out")
+check(goals.weekly == 600 and goals.monthly == 2, "weekly and monthly goals read from Bookshelf's file",
+    tostring(goals.weekly) .. "/" .. tostring(goals.monthly))
+writeGoals({ micromodule_reading_goal_weekly = 600, micromodule_reading_goal_monthly = 2,
+    micromodule_reading_goal_active = { daily = true, weekly = true, monthly = false, yearly = false } })
+goals = Data.goals()
+check(goals.weekly == 600 and goals.monthly == nil and goals.yearly == nil, "monthly and yearly switched off")
+check(goals.daily == 30, "an unset daily goal takes Bookshelf's default", goals.daily)
+writeGoals({ micromodule_reading_goal_active = { daily = false, weekly = true, monthly = true, yearly = false } })
+goals = Data.goals()
+check(goals.weekly == nil and goals.monthly == nil, "weekly and monthly switched on but unset drop out")
 writeGoals({ micromodule_reading_goal_daily = 45, micromodule_reading_goal_yearly = 6 })
 
 -- ------------------------------ 3. sleep-screen hook through core, end to end ---
