@@ -199,7 +199,8 @@ function Data.statsModel(days, now, goals, counts)
         calendar_seconds = calendar_seconds + month.seconds
     end
     return {
-        today = Format.today(c.today_seconds, goals.daily, counts.pages_today, goal_streak),
+        today = Format.today(c.today_seconds, goals.daily, counts.pages_today, goal_streak,
+            days[Chain.key(Chain.addDays(Chain.dayOf(now), -1))] or 0),
         goals = Format.goalRows{
             now = now,
             weekly = goals.weekly, week_seconds = c.week_seconds,

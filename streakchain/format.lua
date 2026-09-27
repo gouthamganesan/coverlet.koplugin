@@ -232,19 +232,24 @@ The Today column.
   fraction    0..1 of the daily goal read today; nil without a goal
   rows        { { label, value }, ... }: the goal, pages today, goal day streak
 ]]
-function F.today(today_seconds, goal_minutes, pages, goal_streak)
+-- The first row is yesterday, as a point of reference for today: the big
+-- number and its bar already say how today is going. A day with no reading
+-- is a rest day, not a zero.
+function F.today(today_seconds, goal_minutes, pages, goal_streak, yesterday_seconds)
     local read = math.floor((today_seconds or 0) / 60)
     local t = { rows = {} }
     if goal_minutes then
         if read >= goal_minutes then
-            t.num, t.unit, t.fraction, t.done = tostring(read), "min today", 1, true
-            table.insert(t.rows, { "Daily goal", "Done" })
+            t.num, t.unit, t.fraction, t.done = tostring(read), "min today · goal done", 1, true
         else
             t.num, t.unit, t.fraction, t.done = tostring(goal_minutes - read), "min to today’s goal", read / goal_minutes, false
-            table.insert(t.rows, { "Read", read .. " of " .. goal_minutes .. " min" })
         end
     else
         t.num, t.unit = tostring(read), "min today"
+    end
+    if yesterday_seconds then
+        local y = math.floor(yesterday_seconds / 60)
+        table.insert(t.rows, { "Yesterday", y > 0 and F.spent(yesterday_seconds) or "Rest day" })
     end
     if pages then table.insert(t.rows, { "Pages today", tostring(pages) }) end
     if goal_minutes then table.insert(t.rows, { "Goal day streak", tostring(goal_streak or 0) }) end

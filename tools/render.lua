@@ -331,8 +331,8 @@ check(ssw ~= nil, "a sleep screen widget is shown")
 local ours = ssw and ssw.widget
 check(ours and ours.model and ours.model.stats ~= nil, "hook built a model with stats from the database")
 check(ours and ours.model and ours.model.book == nil, "no last file means the no-book layout")
-check(ours and ours.model.stats.today.rows[1][2]:match(" of 45 min$") ~= nil, "hook uses Bookshelf's daily goal",
-    ours and ours.model.stats.today.rows[1][2])
+check(ours and ours.model.stats.today.fraction ~= nil and ours.model.stats.today.unit:match("goal") ~= nil,
+    "hook uses Bookshelf's daily goal", ours and ours.model.stats.today.unit)
 if ours then
     local W, H = require("device").screen:getWidth(), require("device").screen:getHeight()
     png(ours, "hook-end-to-end", W, H)
