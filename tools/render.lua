@@ -109,6 +109,27 @@ for _, s in ipairs(states) do
     end
 end
 
+-- The chapter bar: the current chapter at 40% of the width, every other
+-- chapter a visible piece, and one box for a book without chapters.
+local function barCheck(name, want_count, want_gap)
+    local bar = rendered[name] and rendered[name].bar_layout
+    local w = rendered[name].dimen.w > rendered[name].dimen.h and 1012 or 1152
+    local ok_bar = bar and bar.count == want_count and math.abs(bar.box.w - 0.4 * w) < 0.5
+        and math.abs(bar.gap - want_gap) < 0.01
+    local thinnest = math.huge
+    for _, side in ipairs({ "before", "after" }) do
+        for _, p in ipairs(bar and bar[side] or {}) do thinnest = math.min(thinnest, p.w) end
+    end
+    check(ok_bar and thinnest >= 1, name .. ": " .. want_count .. " chapters, the current one magnified",
+        bar and (bar.count .. " chapters, box " .. bar.box.w .. ", gap " .. bar.gap .. ", thinnest " .. thinnest) or "no bar")
+end
+barCheck("18-many-chapters", 21, 4)
+barCheck("31-sixty-four-chapters", 64, 2)
+barCheck("33-landscape-sixty-four", 64, 2)
+check(rendered["32-pdf-no-chapters"].bar_layout == nil, "32-pdf-no-chapters: one box for the whole book")
+check(rendered["32-pdf-no-chapters"].model.book.bar.pages.right == "143 pages to go", "32-pdf-no-chapters: pages to go",
+    rendered["32-pdf-no-chapters"].model.book.bar.pages.right)
+
 -- The daily quote: the next in the rotation that fits, a long one skipped
 -- for a shorter one when the gap is tight, none when nothing fits.
 local function shown(name)
@@ -117,7 +138,7 @@ local function shown(name)
     return c and c.author or "?"
 end
 for name, want in pairs({
-    ["18-many-chapters"] = "René Descartes", ["26-quote-short"] = "Stephen King",
+    ["18-many-chapters"] = "Stephen King", ["26-quote-short"] = "Stephen King",
     ["27-quote-long"] = "John Locke", ["28-quote-none-fits"] = "none",
     ["29-quote-skips-long"] = "Franz Kafka", ["30-landscape-quote"] = "Franz Kafka",
 

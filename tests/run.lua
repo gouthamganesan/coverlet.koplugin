@@ -288,24 +288,60 @@ eq(flame(29, false), "large outline 64", "flame 29 days, today not read")
 eq(flame(30, false), "large outline 64", "flame 30 days, today not read is an outline")
 eq(C.flame(1, true).w .. " " .. C.flame(3, true).w .. " " .. C.flame(7, true).w, "32 46 56", "flame widths")
 
--- ------------------------------------------------------ chapter marks ---
+-- ------------------------------------------------------------ chapters ---
 local sharp = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389, 396, 401, 403, 410, 438, 439 }
 local fr = {}
 for _, p in ipairs(sharp) do table.insert(fr, (p - 1) / 440) end
 local kept = C.thinTicks(fr)
-eq(#kept, 20, "ticks thinned from 26")
-local closest = 1
-for i = 2, #kept do closest = math.min(closest, kept[i] - kept[i - 1]) end
-eq(closest >= C.MIN_GAP, true, "no two marks closer than the minimum gap")
-eq(kept[#kept] < 0.99, true, "no marks in the last 1%")
+local kept_pages = {}
+for _, t in ipairs(kept) do table.insert(kept_pages, math.floor(t * 440 + 1.5)) end
+eq(table.concat(kept_pages, " "), "9 31 53 80 108 135 156 165 189 223 257 274 305 328 356 382 389 396 403 410",
+    "front and back matter fold into their neighbours, every chapter stays")
 eq(#C.thinTicks({}), 0, "no chapters, no marks")
-local from, to = C.chapterBounds(kept, 305 / 440)
-eq(from, 304 / 440, "chapter bounds: Chapter Thirteen starts")
-eq(to, 327 / 440, "chapter bounds: Chapter Fourteen next")
-from, to = C.chapterBounds({ 0.34, 0.69 }, 0.2)
-eq(tostring(from) .. " " .. tostring(to), "nil 0.34", "chapter bounds in the first chapter")
-from, to = C.chapterBounds({ 0.34, 0.69 }, 0.9)
-eq(tostring(from) .. " " .. tostring(to), "0.69 nil", "chapter bounds in the last chapter")
+eq(#C.thinTicks({ 0, 1 }), 0, "marks at the very ends are not chapters")
+local even = {}
+for i = 1, 63 do table.insert(even, i / 64) end
+eq(#C.thinTicks(even), 63, "64 even chapters all stay")
+eq(#C.thinTicks({ 0.5, 0.501 }), 1, "a sliver of a chapter joins its neighbour")
+
+-- The magnified bar at 7b's 1152 px.
+local bar = C.chapterBar(kept, 305 / 440, 1152, 1, false)
+eq(bar.count .. " " .. bar.index, "21 14", "bar: Chapter Thirteen is the 14th of 21")
+eq(bar.box.w, 1152 * 0.4, "bar: the current chapter gets 40%")
+eq(bar.gap, 4, "bar: 4 px between a few chapters")
+eq(#bar.before .. " " .. #bar.after, "13 7", "bar: read before, unread after")
+local last = bar.after[#bar.after]
+eq(math.abs(last.x + last.w - 1152) < 1e-6, true, "bar: spans the whole width")
+eq(math.abs(bar.box.fill - (305 / 440 - 304 / 440) / (327 / 440 - 304 / 440)) < 1e-9, true, "bar: filled as far as the chapter is read")
+local ratio = bar.before[3].w / bar.before[4].w
+eq(math.abs(ratio - (52 - 30) / (79 - 52)) < 1e-9, true, "bar: other chapters in proportion to their length")
+bar = C.chapterBar(even, 0.41, 1152, 1, false)
+eq(bar.count .. " " .. bar.gap, "64 2", "bar: 2 px between many chapters")
+eq(bar.index, 27, "bar: 41% is in the 27th of 64")
+local two = {}
+for i = 1, 399 do table.insert(two, i / 400) end
+bar = C.chapterBar(two, 0.5, 1152, 1, false)
+eq(#bar.before .. " " .. #bar.after, "1 1", "bar: too many to draw one by one, read and unread each one piece")
+bar = C.chapterBar({ 0.34, 0.69 }, 0.9, 1152, 1, true)
+eq(bar.index .. " " .. bar.box.fill .. " " .. #bar.after, "3 1 0", "bar: finished, the last chapter full")
+eq(C.chapterBar({}, 0.4, 1152, 1, false), nil, "bar: no chapters, one box")
+bar = C.chapterBar({ 0.34, 0.69 }, 0.1, 600, 0.5, false)
+eq(bar.gap .. " " .. bar.box.x, "2 0", "bar: scaled, and the first chapter starts at the left")
+
+local labels = F.barLabels({ has_chapters = true, chapter_title = "Chapter Thirteen", chapter_seconds = 1320 }, 306, 440, false)
+eq(labels.chapter.left .. " | " .. labels.chapter.right, "Chapter Thirteen | 22 min left", "bar labels: the chapter and time left")
+labels = F.barLabels({ has_chapters = true, chapter_title = "7", chapter_pages = 12 }, 10, 90, false)
+eq(labels.chapter.left .. " | " .. labels.chapter.right, "Chapter 7 | 12 pages left", "bar labels: a bare number, pages without statistics")
+labels = F.barLabels({ has_chapters = true, in_last_chapter = true, chapter_title = "Epilogue", book_seconds = 360 }, 104, 110, false)
+eq(labels.chapter.right, "6 min left", "bar labels: the last chapter runs to the end")
+labels = F.barLabels({ has_chapters = true, chapter_title = "", chapter_pages = 1 }, 10, 90, false)
+eq(labels.chapter.left .. " | " .. labels.chapter.right, "This chapter | 1 page left", "bar labels: untitled chapter, one page")
+labels = F.barLabels({ has_chapters = false }, 87, 230, false)
+eq(labels.pages.left .. " | " .. labels.pages.right, "Page 87 of 230 | 143 pages to go", "bar labels: no chapters")
+eq(F.barLabels({}, 229, 230, false).pages.right, "1 page to go", "bar labels: one page to go")
+eq(F.barLabels({}, 230, 230, false).pages.right, "Last page", "bar labels: the last page")
+eq(F.barLabels({ has_chapters = true }, 110, 110, true).chapter.left, "Finished", "bar labels: finished")
+eq(next(F.barLabels({}, nil, nil, false).pages), nil, "bar labels: nothing known, nothing said")
 
 -- -------------------------------------------------------------- quote ---
 eq(F.quoteText({ text = "Books are a uniquely portable magic." }), "“Books are a uniquely portable magic.”", "quote in curly quotes")

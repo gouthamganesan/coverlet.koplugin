@@ -5,7 +5,8 @@ so streakchain/screen.lua only ever draws and never asks KOReader anything.
   model.header = { date, battery = "Battery 8%" | nil }
   model.book   = nil (no book) | {
       title, author, pct (0..1), finished, page, total,
-      ticks = { 0..1, ... },                   -- thinned chapter marks
+      ticks = { 0..1, ... },                   -- where each chapter starts, front matter folded in
+      bar = { chapter = { left, fallback, right }, pages = { left, right } },
       step = "22 min left in Chapter Thirteen" | "Finished" | nil,
       hero = { num, unit } | nil,              -- nil when finished
       so_far = "6 h 40 in, since 12 Sep" | nil,
@@ -312,6 +313,7 @@ function Data.bookModel(state, finished, time, now)
         total = state.total,
         ticks = state.ticks or {},
         step = Format.stepLine(step, finished),
+        bar = Format.barLabels(step, state.page, state.total, finished),
         so_far = time and Format.bookSoFar(time.seconds, time.first, now) or nil,
     }
     if finished then return book end

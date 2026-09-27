@@ -226,39 +226,116 @@ function C.flame(streak, read_today)
     return { size = size, variant = variant, w = dims.w, h = dims.h, drop = dims.drop, muted = streak <= 0 }
 end
 
--- Chapter marks for the progress bar, as fractions of the book. Front and
--- back matter (Praise, Title Page, Acknowledgements...) bunch up at the ends,
--- so a mark closer than MIN_GAP to the one before it is dropped, as are marks
--- in the first and last 1%.
-C.MIN_GAP = 0.015
+--[[
+The book's chapters for the bar, as fractions of the book where each one
+starts (the first, at 0, left out). Front and back matter (Praise, Title
+Page, Copyright...) are a page or two each; a chapter shorter than
+MIN_SHARE of the median one joins its shorter neighbour, again and again,
+until none is left. A book of 64 even chapters keeps all 64.
+]]
+C.MIN_SHARE = 0.25
 
 function C.thinTicks(ticks)
-    local sorted = {}
-    for _, t in ipairs(ticks or {}) do table.insert(sorted, t) end
-    table.sort(sorted)
-    local kept, last = {}, nil
-    for _, t in ipairs(sorted) do
-        if t > 0.01 and t < 0.99 and (not last or t - last >= C.MIN_GAP) then
-            table.insert(kept, t)
-            last = t
+    local sorted, seen = {}, {}
+    for _, t in ipairs(ticks or {}) do
+        if t > 0 and t < 1 and not seen[t] then
+            seen[t] = true
+            table.insert(sorted, t)
         end
     end
-    return kept
+    table.sort(sorted)
+    local starts = { 0 }
+    for _, t in ipairs(sorted) do table.insert(starts, t) end
+    local function len(i) return (starts[i + 1] or 1) - starts[i] end
+    local lengths = {}
+    for i = 1, #starts do lengths[i] = len(i) end
+    table.sort(lengths)
+    local min = C.MIN_SHARE * (lengths[math.floor((#lengths + 1) / 2)] or 0)
+    while #starts > 1 do
+        local short, i_short = min, nil
+        for i = 1, #starts do
+            if len(i) < short then short, i_short = len(i), i end
+        end
+        if not i_short then break end
+        -- Merge into the shorter neighbour: dropping a start joins a chapter
+        -- to the one before it.
+        local prev = i_short > 1 and len(i_short - 1) or math.huge
+        local next = i_short < #starts and len(i_short + 1) or math.huge
+        if prev <= next then
+            table.remove(starts, i_short)
+        else
+            table.remove(starts, i_short + 1)
+        end
+    end
+    table.remove(starts, 1)
+    return starts
 end
 
--- The marks either side of the reading position: the current chapter's start
--- and end, which the bar draws full height. Either can be nil (the first or
--- the last chapter).
-function C.chapterBounds(ticks, pct)
-    local from, to
-    for _, t in ipairs(ticks or {}) do
-        if t <= pct then
-            from = t
-        elseif not to then
-            to = t
+--[[
+The magnified chapter bar, laid out across `width` px: the current chapter
+gets MAGNIFY of the width, the others share the rest in proportion to their
+length with gaps between them (4 px, 2 px when they're many, and read and
+unread each drawn as one piece when even that leaves them too thin).
+`s` scales those design px. Returns nil for a book without chapters.
+  { box = { x, w, fill (0..1 of the chapter read) }, before = { { x, w } },
+    after = { { x, w } }, count, index, gap }
+]]
+C.MAGNIFY = 0.4
+
+function C.chapterBar(ticks, pct, width, s, finished)
+    ticks = ticks or {}
+    if #ticks == 0 then return nil end
+    s = s or 1
+    local starts = { 0 }
+    for _, t in ipairs(ticks) do table.insert(starts, t) end
+    local n = #starts
+    pct = math.max(0, math.min(1, pct or 0))
+    local k = 1
+    if finished then
+        k = n
+    else
+        for i = 1, n do
+            if starts[i] <= pct then k = i end
         end
     end
-    return from, to
+    local function len(i) return (starts[i + 1] or 1) - starts[i] end
+    local box_w = width * C.MAGNIFY
+    local rest_len = 1 - len(k)
+    local others = n - 1
+
+    local gap, merged
+    if (width - box_w - others * 4 * s) / others >= 16 * s then
+        gap = 4 * s
+    elseif (width - box_w - others * 2 * s) / others >= 4 * s then
+        gap = 2 * s
+    else
+        gap, merged = 4 * s, true
+    end
+
+    local pieces = {} -- { length, side } in order, the box as side "box"
+    if merged then
+        if k > 1 then table.insert(pieces, { starts[k], "before" }) end
+        table.insert(pieces, { len(k), "box" })
+        if k < n then table.insert(pieces, { 1 - (starts[k + 1] or 1), "after" }) end
+    else
+        for i = 1, n do
+            table.insert(pieces, { len(i), i < k and "before" or i == k and "box" or "after" })
+        end
+    end
+    local share = width - box_w - (#pieces - 1) * gap
+    local bar = { before = {}, after = {}, count = n, index = k, gap = gap }
+    local x = 0
+    for _, p in ipairs(pieces) do
+        local w = p[2] == "box" and box_w or (rest_len > 0 and share * p[1] / rest_len or 0)
+        if p[2] == "box" then
+            local fill = finished and 1 or (pct - starts[k]) / len(k)
+            bar.box = { x = x, w = w, fill = math.max(0, math.min(1, fill)) }
+        else
+            table.insert(bar[p[2]], { x = x, w = w })
+        end
+        x = x + w + gap
+    end
+    return bar
 end
 
 return C

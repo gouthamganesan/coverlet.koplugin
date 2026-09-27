@@ -19,6 +19,7 @@ F.LOW_BATTERY = 15
 F.SEGMENTS_MAX = 24 -- book goals up to this many draw one cell per book
 
 F.FINISHED = "Finished"
+F.THIS_CHAPTER = "This chapter"
 F.NO_BOOK_TITLE = "No book open"
 F.NO_BOOK_SUB = "Your shelf is one tap away."
 F.STATS_OFF_NOTE = "Your streak appears once Reading statistics is on."
@@ -131,6 +132,47 @@ function F.nextStep(o)
         return pages .. (pages == 1 and " page" or " pages") .. " left in " .. where
     end
     return nil
+end
+
+--[[
+The labels under the chapter bar.
+  chapter  the current chapter's own title ("Chapter 7" for a bare number),
+           with `fallback` for a title too wide for its space, and what's
+           left of it on the right: "22 min left", "12 pages left"
+  pages    for a book without chapters: "Page 87 of 230" / "143 pages to go"
+A finished book's bar reads "Finished" and nothing else.
+]]
+function F.barLabels(step, page, total, finished)
+    step = step or {}
+    if finished then
+        return { chapter = { left = F.FINISHED }, pages = { left = F.FINISHED } }
+    end
+    local labels = {}
+    if step.has_chapters then
+        local t = step.chapter_title and trim(step.chapter_title) or ""
+        if t:match("^%d+$") then t = "Chapter " .. t end
+        local right
+        local seconds = step.chapter_seconds or (step.in_last_chapter and step.book_seconds)
+        local pages = step.chapter_pages or (step.in_last_chapter and step.book_pages)
+        if seconds then
+            right = F.left(seconds) .. " left"
+        elseif pages then
+            pages = math.max(1, math.floor(pages))
+            right = pages .. (pages == 1 and " page left" or " pages left")
+        end
+        labels.chapter = { left = t ~= "" and t or F.THIS_CHAPTER, fallback = F.THIS_CHAPTER, right = right }
+    end
+    if page and total then
+        local to_go = total - page
+        labels.pages = {
+            left = "Page " .. page .. " of " .. total,
+            right = to_go <= 0 and "Last page" or (to_go .. (to_go == 1 and " page to go" or " pages to go")),
+        }
+    else
+        labels.pages = {}
+    end
+    labels.chapter = labels.chapter or labels.pages
+    return labels
 end
 
 -- The line under the author: the next step, or "Finished".

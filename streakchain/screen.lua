@@ -510,33 +510,55 @@ function StreakScreen:bookBand(bb, x, y, px, book, parts, column, quote)
 end
 
 --[[
-The book's bar: its chapters as marks, the current chapter's two marks
-full height, and the reading position. One function, so the bar can be
-swapped for another design whole.
+The chapter bar, 7b's "Magnified chapter": the current chapter drawn big,
+40% of the width, filled as far as you've read it, with its name and what's
+left of it underneath; the chapters before it as solid pieces and the ones
+after as outlines, each as wide as its share of the rest of the book. A
+book without chapters is one box, with the page and the pages to go.
+One function, so the bar can be swapped for another design whole.
 ]]
-local BAR_H = 40
+local BAR_H = 76
 
 function StreakScreen:chapterBar(bb, x, y, w, px, book)
     local H = px(BAR_H)
     if not bb then return H end
     mark("chapter bar", x, y, w, H)
     local pct = book.finished and 1 or math.max(0, math.min(1, book.pct or 0))
-    local function at(p) return x + math.floor(w * p + 0.5) end
-    rect(bb, x, y + px(18), w, px(4), G99)
-    rect(bb, x, y + px(13), at(pct) - x, px(14), INK)
-    local from, to = Chain.chapterBounds(book.ticks, pct)
-    for _, t in ipairs(book.ticks or {}) do
-        if t == from or t == to then
-            rect(bb, at(t) - px(2), y, px(4), H, G55)
-        else
-            rect(bb, at(t) - px(2), y + px(8), px(4), px(24), G55)
+    local bar = Chain.chapterBar(book.ticks, pct, w, px(1000) / 1000, book.finished)
+    self.bar_layout = bar
+    local box_h, seg_y, seg_h = px(40), y + px(12), px(16)
+    local function box(bx, bw, fill)
+        rect(bb, bx, y, bw, box_h, PAPER)
+        frame(bb, bx, y, bw, box_h, math.max(1, px(3)), INK)
+        rect(bb, bx, y, math.floor(bw * fill + 0.5), box_h, INK)
+    end
+    local labels, lx, lw
+    if bar then
+        for _, p in ipairs(bar.before) do
+            rect(bb, x + p.x, seg_y, math.max(1, p.w), seg_h, INK)
         end
+        for _, p in ipairs(bar.after) do
+            rect(bb, x + p.x, seg_y, math.max(1, p.w), seg_h, PAPER)
+            frame(bb, x + p.x, seg_y, math.max(1, p.w), seg_h, math.max(1, px(2)), G99)
+        end
+        box(x + bar.box.x, bar.box.w, bar.box.fill)
+        labels, lx, lw = book.bar and book.bar.chapter or {}, x + bar.box.x, bar.box.w
+    else
+        box(x, w, pct)
+        labels, lx, lw = book.bar and book.bar.pages or {}, x, w
     end
-    rect(bb, x + w - px(4), y, px(4), H, INK)
-    if not book.finished then
-        local r = px(18)
-        round(bb, math.max(x + r, math.min(x + w - r, x + w * pct)), y + H / 2, r, nil, INK)
+    local right = labels.right and line(string.upper(labels.right), "sans", px(22), G55, px(28)) or nil
+    local room = lw - (right and right.w + px(16) or 0)
+    local left = labels.left and line(string.upper(labels.left), "sans", px(22), G55, px(28)) or nil
+    if left and left.w > room and labels.fallback then
+        free(left)
+        left = line(string.upper(labels.fallback), "sans", px(22), G55, px(28))
     end
+    if left and left.w > room then clash("chapter bar label runs into its neighbour") end
+    local base = y + px(48)
+    if left then put(bb, left, lx, base + left.base) end
+    if right then put(bb, right, lx + lw - right.w, base + right.base) end
+    free(left, right)
     return H
 end
 

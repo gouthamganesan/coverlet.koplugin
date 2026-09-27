@@ -98,6 +98,22 @@ local function quotes(...)
     return q
 end
 
+-- 64 chapters of uneven length (a fixed sequence, so renders don't move).
+local SIXTY_FOUR = (function()
+    local lengths, seed, total = {}, 7, 0
+    for i = 1, 64 do
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        lengths[i] = 5 + seed % 8
+        total = total + lengths[i]
+    end
+    local starts, at = {}, 0
+    for i = 1, 64 do
+        table.insert(starts, at / total)
+        at = at + lengths[i]
+    end
+    return starts
+end)()
+
 local SHARP_STARTS = { 4, 7, 8, 9, 31, 53, 80, 108, 135, 156, 165, 189, 223, 257, 274, 305, 328, 356, 382, 389,
     396, 401, 403, 410, 438, 439 }
 
@@ -193,9 +209,21 @@ return function(cover)
             cover = cover("jurassic") }, stats = s_drawn, quotes = quotes(1) } },
         -- Sagan is next but too long, so Kafka shows and Sagan waits.
         { "29-quote-skips-long", { header = header(), book = sharp(cover), stats = s_drawn, quotes = quotes(5, 2) } },
+        { "31-sixty-four-chapters", { header = header(), book = book{
+            title = "Middlemarch", author = "George Eliot", pct = 0.41, page = 369, total = 900, chapters = SIXTY_FOUR,
+            step = { has_chapters = true, chapter_title = "Chapter 28", chapter_seconds = 840, book_seconds = 64000 },
+            cover = cover("simplicity") }, stats = s_drawn } },
+        { "32-pdf-no-chapters", { header = header(), book = book{
+            title = "Designing Data-Intensive Applications", author = "Martin Kleppmann", pct = 87 / 230, page = 87, total = 230,
+            step = { has_chapters = false, book_seconds = 51480 } }, stats = s_drawn } },
+        { "33-landscape-sixty-four", { header = header(), book = book{
+            title = "Middlemarch", author = "George Eliot", pct = 0.41, page = 369, total = 900, chapters = SIXTY_FOUR,
+            step = { has_chapters = true, chapter_title = "Chapter 28", chapter_seconds = 840, book_seconds = 64000 },
+            cover = cover("simplicity") }, stats = s_drawn }, 1680, 1264 },
         { "30-landscape-quote", { header = header(), book = sharp(cover), stats = s_drawn, quotes = quotes(2) }, 1680, 1264 },
     }
-    -- Every other state starts the rotation at Descartes, as drawn in 7b.
+    -- Every other state starts the rotation at Descartes, as drawn in 7b; where
+    -- two lines don't fit, King's one line shows instead.
     for _, s in ipairs(list) do
         if not s[2].quotes then s[2].quotes = quotes(3) end
     end
